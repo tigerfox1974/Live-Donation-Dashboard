@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { EventProvider, useEvent } from './contexts/EventContext';
 import { DisplayScreen } from './pages/DisplayScreen';
 import { DonorScreen } from './pages/DonorScreen';
@@ -19,9 +19,89 @@ export interface ActiveEventInfo {
   date?: string;
   venue?: string;
 }
+const AUTH_STORAGE_KEY = 'polvak_auth';
+const REDIRECT_STORAGE_KEY = 'redirectAfterLogin';
+const PROTECTED_ROUTE_PREFIXES = [
+  '#/panel-select',
+  '#/projection-select',
+  '#/operator',
+  '#/display',
+  '#/final',
+  '#/events',
+  '#/event-console'
+];
+const getStoredAuth = () => {
+  try {
+    return localStorage.getItem(AUTH_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+const setStoredAuth = (value: boolean) => {
+  try {
+    if (value) {
+      localStorage.setItem(AUTH_STORAGE_KEY, '1');
+    } else {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+  } catch {
+    // no-op
+  }
+};
+const getRedirectAfterLogin = () => {
+  try {
+    return localStorage.getItem(REDIRECT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+};
+const setRedirectAfterLogin = (hash: string) => {
+  try {
+    localStorage.setItem(REDIRECT_STORAGE_KEY, hash);
+  } catch {
+    // no-op
+  }
+};
+const clearRedirectAfterLogin = () => {
+  try {
+    localStorage.removeItem(REDIRECT_STORAGE_KEY);
+  } catch {
+    // no-op
+  }
+};
+const getSafeRedirectHash = (hash: string | null) => {
+  if (!hash || !hash.startsWith('#/')) return null;
+  if (PROTECTED_ROUTE_PREFIXES.some((prefix) => hash.startsWith(prefix))) {
+    return hash;
+  }
+  return null;
+};
+interface ProtectedRouteProps {
+  isAuthenticated: boolean;
+  onLogin: () => void;
+  children: React.ReactNode;
+}
+function ProtectedRoute({ isAuthenticated, onLogin, children }: ProtectedRouteProps) {
+  useEffect(() => {
+    if (!isAuthenticated) {
+      const currentHash = window.location.hash || '#/';
+      const safeTarget = getSafeRedirectHash(currentHash);
+      if (safeTarget) {
+        setRedirectAfterLogin(safeTarget);
+      }
+      if (currentHash !== '#/') {
+        window.location.hash = '#/';
+      }
+    }
+  }, [isAuthenticated]);
+  if (!isAuthenticated) {
+    return <QRLandingPage onOperatorLogin={onLogin} />;
+  }
+  return <>{children}</>;
+}
 function AppContent() {
   const [hash, setHash] = useState(window.location.hash);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => getStoredAuth());
   const [activeEvent, setActiveEvent] = useState<ActiveEventInfo | null>({
     id: 'evt-1',
     name: '2024 Yılsonu Bağış Gecesi',
@@ -42,20 +122,44 @@ function AppContent() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+  const setAuth = (value: boolean) => {
+    setIsLoggedIn(value);
+    setStoredAuth(value);
+    if (!value) {
+      clearRedirectAfterLogin();
+    }
+  };
+  const redirectAfterLogin = useMemo(
+    () => getSafeRedirectHash(getRedirectAfterLogin()),
+    [hash]
+  );
   const handleLogin = () => {
-    setIsLoggedIn(true);
+    setAuth(true);
+    if (redirectAfterLogin) {
+      clearRedirectAfterLogin();
+      window.location.hash = redirectAfterLogin;
+      return;
+    }
     window.location.hash = '#/panel-select';
   };
   const handleLogout = () => {
-    setIsLoggedIn(false);
+    setAuth(false);
     window.location.hash = '#/';
+  };
+  const handleAlreadyAuthenticatedRedirect = () => {
+    if (redirectAfterLogin) {
+      clearRedirectAfterLogin();
+      window.location.hash = redirectAfterLogin;
+      return;
+    }
+    window.location.hash = '#/panel-select';
   };
   const handleSetActiveEvent = (event: ActiveEventInfo | null) => {
     setActiveEvent(event);
   };
   const handleSwitchToOperator = (event: ActiveEventInfo) => {
     setActiveEvent(event);
-    setIsLoggedIn(true);
+    setAuth(true);
     window.location.hash = '#/operator';
   };
   const handleSwitchToProjection = (event: ActiveEventInfo) => {
@@ -86,6 +190,11 @@ function AppContent() {
   const handleGoToEvents = () => {
     window.location.hash = '#/events';
   };
+  useEffect(() => {
+    if (isLoggedIn && (hash === '' || hash === '#' || hash === '#/')) {
+      handleAlreadyAuthenticatedRedirect();
+    }
+  }, [hash, isLoggedIn]);
   // Router
   // #/ -> QR Landing Page (public)
   // #/panel-select -> Panel Selector (after login)
@@ -99,36 +208,37 @@ function AppContent() {
   // #/demo -> Demo/Admin Landing (hidden, for testing)
   // Panel Selector - after login
   if (hash.startsWith('#/panel-select')) {
-    if (!isLoggedIn) {
-      return <QRLandingPage onOperatorLogin={handleLogin} />;
-    }
     return (
-      <PanelSelector
-        onSelectOperator={handleSelectOperator}
-        onSelectProjection={handleSelectProjection}
-        onLogout={handleLogout} />);
+      <ProtectedRoute isAuthenticated={isLoggedIn} onLogin={handleLogin}>
+        <PanelSelector
+          onSelectOperator={handleSelectOperator}
+          onSelectProjection={handleSelectProjection}
+          onLogout={handleLogout} />
+      </ProtectedRoute>);
 
 
   }
   // Projection Event Selector
   if (hash.startsWith('#/projection-select')) {
-    if (!isLoggedIn) {
-      return <QRLandingPage onOperatorLogin={handleLogin} />;
-    }
     return (
-      <ProjectionEventSelector
-        onBack={() => window.location.hash = '#/panel-select'}
-        onSelectEvent={handleStartProjection}
-        broadcastingEventId={broadcastingEventId} />);
+      <ProtectedRoute isAuthenticated={isLoggedIn} onLogin={handleLogin}>
+        <ProjectionEventSelector
+          onBack={() => window.location.hash = '#/panel-select'}
+          onSelectEvent={handleStartProjection}
+          broadcastingEventId={broadcastingEventId} />
+      </ProtectedRoute>);
 
 
   }
   // Display screen (projection) - public access
   if (hash.startsWith('#/display')) {
-    return isFinalScreen ?
-    <FinalScreen activeEvent={activeEvent} /> :
+    return (
+      <ProtectedRoute isAuthenticated={isLoggedIn} onLogin={handleLogin}>
+        {isFinalScreen ?
+        <FinalScreen activeEvent={activeEvent} /> :
 
-    <DisplayScreen activeEvent={activeEvent} />;
+        <DisplayScreen activeEvent={activeEvent} />}
+      </ProtectedRoute>);
 
   }
   // Production donor route: #/p/:token (direct QR access)
@@ -149,33 +259,37 @@ function AppContent() {
     }
   }
   if (hash.startsWith('#/final')) {
-    return <FinalScreen activeEvent={activeEvent} />;
+    return (
+      <ProtectedRoute isAuthenticated={isLoggedIn} onLogin={handleLogin}>
+        <FinalScreen activeEvent={activeEvent} />
+      </ProtectedRoute>);
   }
   // Events Console - hidden, URL-only access (no menu link)
-  if (hash.startsWith('#/events')) {
+  if (hash.startsWith('#/events') || hash.startsWith('#/event-console')) {
     return (
-      <EventsConsole
-        onSwitchToOperator={handleSwitchToOperator}
-        onSwitchToProjection={handleSwitchToProjection}
-        onSwitchToFinal={handleSwitchToFinal}
-        activeEventId={activeEvent?.id || null} />);
+      <ProtectedRoute isAuthenticated={isLoggedIn} onLogin={handleLogin}>
+        <EventsConsole
+          onSwitchToOperator={handleSwitchToOperator}
+          onSwitchToProjection={handleSwitchToProjection}
+          onSwitchToFinal={handleSwitchToFinal}
+          activeEventId={activeEvent?.id || null} />
+      </ProtectedRoute>);
 
 
   }
   // Operator panel - requires login
   if (hash.startsWith('#/operator')) {
-    if (!isLoggedIn) {
-      return <QRLandingPage onOperatorLogin={handleLogin} />;
-    }
     return (
-      <OperatorPanel
-        onLogout={handleLogout}
-        activeEvent={activeEvent}
-        onSetActiveEvent={handleSetActiveEvent}
-        broadcastingEventId={broadcastingEventId}
-        onSetBroadcasting={handleSetBroadcasting}
-        onOpenEventDetail={handleOpenEventDetail}
-        onGoToEvents={handleGoToEvents} />);
+      <ProtectedRoute isAuthenticated={isLoggedIn} onLogin={handleLogin}>
+        <OperatorPanel
+          onLogout={handleLogout}
+          activeEvent={activeEvent}
+          onSetActiveEvent={handleSetActiveEvent}
+          broadcastingEventId={broadcastingEventId}
+          onSetBroadcasting={handleSetBroadcasting}
+          onOpenEventDetail={handleOpenEventDetail}
+          onGoToEvents={handleGoToEvents} />
+      </ProtectedRoute>);
 
 
   }
@@ -213,7 +327,7 @@ function AppContent() {
           <div className="space-y-3">
             <a
               href="#/panel-select"
-              onClick={() => setIsLoggedIn(true)}
+              onClick={() => setAuth(true)}
               className="flex items-center gap-4 w-full p-4 bg-[#1e3a5f] hover:bg-[#152a45] text-white rounded-xl transition-colors group">
 
               <div className="w-12 h-12 bg-white/10 rounded-lg flex items-center justify-center">
@@ -289,7 +403,11 @@ function AppContent() {
 
   }
   // Default: QR Landing Page (root route #/ or empty)
-  return <QRLandingPage onOperatorLogin={handleLogin} />;
+  return (
+    <QRLandingPage
+      onOperatorLogin={handleLogin}
+      isAuthenticated={isLoggedIn}
+      onAlreadyAuthenticated={handleAlreadyAuthenticatedRedirect} />);
 }
 export function App() {
   return (

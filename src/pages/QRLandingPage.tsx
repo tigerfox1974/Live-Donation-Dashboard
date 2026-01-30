@@ -1,17 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { QrCode, Lock, X, AlertCircle } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from '../lib/constants';
 interface QRLandingPageProps {
   onOperatorLogin: () => void;
+  isAuthenticated?: boolean;
+  onAlreadyAuthenticated?: () => void;
 }
-export function QRLandingPage({ onOperatorLogin }: QRLandingPageProps) {
+export function QRLandingPage({
+  onOperatorLogin,
+  isAuthenticated = false,
+  onAlreadyAuthenticated
+}: QRLandingPageProps) {
   const [showPinModal, setShowPinModal] = useState(false);
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const DEMO_PIN = '1234'; // Demo PIN for UI purposes
+  useEffect(() => {
+    if (isAuthenticated && onAlreadyAuthenticated) {
+      onAlreadyAuthenticated();
+    }
+  }, [isAuthenticated, onAlreadyAuthenticated]);
   const handlePinSubmit = () => {
     setIsLoading(true);
     setError('');
