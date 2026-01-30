@@ -55,26 +55,8 @@ import {
   Loader2 } from
 'lucide-react';
 import type { ActiveEventInfo } from '../App';
+import type { CreateEventInput, EventRecord, EventStatus } from '../types';
 // ============ TYPES ============
-type EventStatus = 'draft' | 'live' | 'closed' | 'archived';
-interface EventRecord {
-  id: string;
-  name: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  venue: string;
-  description?: string;
-  status: EventStatus;
-  participantCount: number;
-  itemCount: number;
-  totalTarget: number;
-  totalApproved: number;
-  totalPending: number;
-  totalRejected: number;
-  lastUpdated: number;
-  createdAt: number;
-}
 interface AuditLogEntry {
   id: string;
   eventId: string;
@@ -88,79 +70,9 @@ interface EventsConsoleProps {
   onSwitchToProjection?: (event: ActiveEventInfo) => void;
   onSwitchToFinal?: (event: ActiveEventInfo) => void;
   activeEventId?: string | null;
+  events: EventRecord[];
+  onCreateEvent: (input: CreateEventInput) => void;
 }
-// ============ MOCK DATA ============
-const MOCK_EVENTS: EventRecord[] = [
-{
-  id: 'evt-1',
-  name: '2024 Yılsonu Bağış Gecesi',
-  date: '2024-12-15',
-  startTime: '19:00',
-  endTime: '23:00',
-  venue: 'Lefkoşa Merit Hotel',
-  description: 'Yıllık ana bağış etkinliği',
-  status: 'live',
-  participantCount: 150,
-  itemCount: 5,
-  totalTarget: 168,
-  totalApproved: 89,
-  totalPending: 12,
-  totalRejected: 3,
-  lastUpdated: Date.now() - 300000,
-  createdAt: Date.now() - 86400000 * 30
-},
-{
-  id: 'evt-2',
-  name: '2024 Bahar Dayanışma Gecesi',
-  date: '2024-04-20',
-  startTime: '19:30',
-  endTime: '22:30',
-  venue: 'Girne Acapulco Resort',
-  status: 'closed',
-  participantCount: 120,
-  itemCount: 4,
-  totalTarget: 100,
-  totalApproved: 95,
-  totalPending: 0,
-  totalRejected: 5,
-  lastUpdated: Date.now() - 86400000 * 200,
-  createdAt: Date.now() - 86400000 * 250
-},
-{
-  id: 'evt-3',
-  name: '2025 Yeni Yıl Etkinliği',
-  date: '2025-01-10',
-  startTime: '20:00',
-  endTime: '00:00',
-  venue: 'Lefkoşa Büyük Han',
-  status: 'draft',
-  participantCount: 0,
-  itemCount: 3,
-  totalTarget: 50,
-  totalApproved: 0,
-  totalPending: 0,
-  totalRejected: 0,
-  lastUpdated: Date.now() - 3600000,
-  createdAt: Date.now() - 86400000 * 5
-},
-{
-  id: 'evt-4',
-  name: '2023 Sonbahar Gecesi',
-  date: '2023-10-15',
-  startTime: '19:00',
-  endTime: '22:00',
-  venue: 'Gazimağusa Palm Beach',
-  status: 'archived',
-  participantCount: 80,
-  itemCount: 3,
-  totalTarget: 60,
-  totalApproved: 58,
-  totalPending: 0,
-  totalRejected: 2,
-  lastUpdated: Date.now() - 86400000 * 400,
-  createdAt: Date.now() - 86400000 * 450
-}];
-
 const MOCK_AUDIT_LOG: AuditLogEntry[] = [
 {
   id: 'log-1',
@@ -290,7 +202,9 @@ export function EventsConsole({
   onSwitchToOperator,
   onSwitchToProjection,
   onSwitchToFinal,
-  activeEventId
+  activeEventId,
+  events,
+  onCreateEvent
 }: EventsConsoleProps) {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -313,16 +227,16 @@ export function EventsConsole({
     'live' | 'close' | 'archive' | null>(
     null);
   const [showReportDownloadModal, setShowReportDownloadModal] = useState(false);
-  const selectedEvent = MOCK_EVENTS.find((e) => e.id === selectedEventId);
+  const selectedEvent = events.find((e) => e.id === selectedEventId);
   // Stats
   const stats = useMemo(() => {
-    const total = MOCK_EVENTS.length;
-    const live = MOCK_EVENTS.filter((e) => e.status === 'live').length;
-    const draft = MOCK_EVENTS.filter((e) => e.status === 'draft').length;
-    const archived = MOCK_EVENTS.filter(
+    const total = events.length;
+    const live = events.filter((e) => e.status === 'live').length;
+    const draft = events.filter((e) => e.status === 'draft').length;
+    const archived = events.filter(
       (e) => e.status === 'closed' || e.status === 'archived'
     ).length;
-    const totalDonations = MOCK_EVENTS.reduce(
+    const totalDonations = events.reduce(
       (sum, e) => sum + e.totalApproved,
       0
     );
@@ -333,10 +247,10 @@ export function EventsConsole({
       archived,
       totalDonations
     };
-  }, []);
+  }, [events]);
   // Filtered & sorted events
   const filteredEvents = useMemo(() => {
-    let result = [...MOCK_EVENTS];
+    let result = [...events];
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -361,7 +275,7 @@ export function EventsConsole({
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return result;
-  }, [searchQuery, statusFilter, sortBy, sortDir]);
+  }, [events, searchQuery, statusFilter, sortBy, sortDir]);
   const toggleRowSelection = (id: string) => {
     const newSet = new Set(selectedRows);
     if (newSet.has(id)) newSet.delete(id);else
@@ -780,7 +694,12 @@ export function EventsConsole({
 
       {/* Modals */}
       {showNewEventModal &&
-      <NewEventModal onClose={() => setShowNewEventModal(false)} />
+      <NewEventModal
+        onClose={() => setShowNewEventModal(false)}
+        onCreate={(input) => {
+          onCreateEvent(input);
+          setShowNewEventModal(false);
+        }} />
       }
 
       {showCloneModal &&
@@ -2207,7 +2126,10 @@ function AuditTab({ auditLog }: {auditLog: AuditLogEntry[];}) {
 
 }
 // ============ MODALS ============
-function NewEventModal({ onClose }: {onClose: () => void;}) {
+function NewEventModal({
+  onClose,
+  onCreate
+}: {onClose: () => void;onCreate: (input: CreateEventInput) => void;}) {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     name: '',
@@ -2474,7 +2396,22 @@ function NewEventModal({ onClose }: {onClose: () => void;}) {
           </Button>
           <Button
             variant="primary"
-            onClick={step === 3 ? onClose : () => setStep(step + 1)}
+            onClick={() => {
+              if (step === 3) {
+                onCreate({
+                  name: formData.name,
+                  date: formData.date,
+                  startTime: formData.startTime,
+                  endTime: formData.endTime,
+                  venue: formData.venue,
+                  description: formData.description,
+                  template: formData.template as CreateEventInput['template']
+                });
+                onClose();
+                return;
+              }
+              setStep(step + 1);
+            }}
             disabled={step === 1 && !formData.name}>
 
             {step === 3 ? 'Taslak Oluştur' : 'İleri'}

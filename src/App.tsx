@@ -9,18 +9,21 @@ import { EventsConsole } from './pages/EventsConsole';
 import { PanelSelector } from './pages/PanelSelector';
 import { ProjectionEventSelector } from './pages/ProjectionEventSelector';
 import { MOCK_PARTICIPANTS } from './data/mockData';
+import { MOCK_EVENTS } from './data/mockEvents';
+import type { CreateEventInput, EventRecord, EventStatus } from './types';
 import { Monitor, Settings, Users, FlaskConical } from 'lucide-react';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from './lib/constants';
 // Extended active event type with metadata
 export interface ActiveEventInfo {
   id: string;
   name: string;
-  status: 'draft' | 'live' | 'closed' | 'archived';
+  status: EventStatus;
   date?: string;
   venue?: string;
 }
 const AUTH_STORAGE_KEY = 'polvak_auth';
 const REDIRECT_STORAGE_KEY = 'redirectAfterLogin';
+const EVENTS_STORAGE_KEY = 'polvak_events';
 const PROTECTED_ROUTE_PREFIXES = [
   '#/panel-select',
   '#/projection-select',
@@ -76,6 +79,26 @@ const getSafeRedirectHash = (hash: string | null) => {
   }
   return null;
 };
+const getStoredEvents = () => {
+  try {
+    const raw = localStorage.getItem(EVENTS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed as EventRecord[];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+const setStoredEvents = (events: EventRecord[]) => {
+  try {
+    localStorage.setItem(EVENTS_STORAGE_KEY, JSON.stringify(events));
+  } catch {
+    // no-op
+  }
+};
 interface ProtectedRouteProps {
   isAuthenticated: boolean;
   onLogin: () => void;
@@ -102,6 +125,10 @@ function ProtectedRoute({ isAuthenticated, onLogin, children }: ProtectedRoutePr
 function AppContent() {
   const [hash, setHash] = useState(window.location.hash);
   const [isLoggedIn, setIsLoggedIn] = useState(() => getStoredAuth());
+  const [events, setEvents] = useState<EventRecord[]>(() => {
+    const stored = getStoredEvents();
+    return stored && stored.length > 0 ? stored : MOCK_EVENTS;
+  });
   const [activeEvent, setActiveEvent] = useState<ActiveEventInfo | null>({
     id: 'evt-1',
     name: '2024 Yılsonu Bağış Gecesi',
@@ -122,6 +149,9 @@ function AppContent() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+  useEffect(() => {
+    setStoredEvents(events);
+  }, [events]);
   const setAuth = (value: boolean) => {
     setIsLoggedIn(value);
     setStoredAuth(value);
@@ -190,6 +220,29 @@ function AppContent() {
   const handleGoToEvents = () => {
     window.location.hash = '#/events';
   };
+  const handleCreateEvent = (input: CreateEventInput) => {
+    const now = Date.now();
+    const safeDate = input.date || new Date().toISOString().slice(0, 10);
+    const newEvent: EventRecord = {
+      id: `evt-${now}`,
+      name: input.name.trim(),
+      date: safeDate,
+      startTime: input.startTime || '19:00',
+      endTime: input.endTime || '23:00',
+      venue: input.venue || '-',
+      description: input.description,
+      status: 'draft',
+      participantCount: 0,
+      itemCount: 0,
+      totalTarget: 0,
+      totalApproved: 0,
+      totalPending: 0,
+      totalRejected: 0,
+      lastUpdated: now,
+      createdAt: now
+    };
+    setEvents((prev) => [newEvent, ...prev]);
+  };
   useEffect(() => {
     if (isLoggedIn && (hash === '' || hash === '#' || hash === '#/')) {
       handleAlreadyAuthenticatedRedirect();
@@ -225,7 +278,8 @@ function AppContent() {
         <ProjectionEventSelector
           onBack={() => window.location.hash = '#/panel-select'}
           onSelectEvent={handleStartProjection}
-          broadcastingEventId={broadcastingEventId} />
+          broadcastingEventId={broadcastingEventId}
+          events={events} />
       </ProtectedRoute>);
 
 
@@ -272,7 +326,9 @@ function AppContent() {
           onSwitchToOperator={handleSwitchToOperator}
           onSwitchToProjection={handleSwitchToProjection}
           onSwitchToFinal={handleSwitchToFinal}
-          activeEventId={activeEvent?.id || null} />
+          activeEventId={activeEvent?.id || null}
+          events={events}
+          onCreateEvent={handleCreateEvent} />
       </ProtectedRoute>);
 
 
@@ -283,6 +339,7 @@ function AppContent() {
       <ProtectedRoute isAuthenticated={isLoggedIn} onLogin={handleLogin}>
         <OperatorPanel
           onLogout={handleLogout}
+          events={events}
           activeEvent={activeEvent}
           onSetActiveEvent={handleSetActiveEvent}
           broadcastingEventId={broadcastingEventId}

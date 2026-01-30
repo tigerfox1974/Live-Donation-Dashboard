@@ -56,8 +56,10 @@ import {
   NoEventEmptyState } from
 '../components/ActiveEventBar';
 import type { ActiveEventInfo } from '../App';
+import type { EventRecord } from '../types';
 interface OperatorPanelProps {
   onLogout?: () => void;
+  events: EventRecord[];
   activeEvent?: ActiveEventInfo | null;
   onSetActiveEvent?: (event: ActiveEventInfo | null) => void;
   broadcastingEventId?: string | null;
@@ -131,6 +133,7 @@ function EventContextBar({
 }
 export function OperatorPanel({
   onLogout,
+  events,
   activeEvent,
   onSetActiveEvent,
   broadcastingEventId,
@@ -439,7 +442,8 @@ export function OperatorPanel({
         onClose={() => setShowEventSelector(false)}
         onSelectEvent={handleSelectEvent}
         onCreateNew={handleGoToEvents}
-        currentEventId={activeEvent?.id} />
+        currentEventId={activeEvent?.id}
+        events={events} />
 
     </div>);
 

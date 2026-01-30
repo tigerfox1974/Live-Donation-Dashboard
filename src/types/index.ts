@@ -1,6 +1,8 @@
 export type ParticipantType = 'ORG' | 'PERSON';
 export type ParticipantStatus = 'active' | 'inactive';
 export type ItemStatus = 'active' | 'inactive';
+export type EventStatus = 'draft' | 'live' | 'closed' | 'archived';
+export type EventTemplate = 'empty' | 'template' | 'import';
 
 export interface Participant {
   id: string;
@@ -21,6 +23,35 @@ export interface DonationItem {
   order: number;
   status: ItemStatus;
   notes?: string;
+}
+
+export interface EventRecord {
+  id: string;
+  name: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  venue: string;
+  description?: string;
+  status: EventStatus;
+  participantCount: number;
+  itemCount: number;
+  totalTarget: number;
+  totalApproved: number;
+  totalPending: number;
+  totalRejected: number;
+  lastUpdated: number;
+  createdAt: number;
+}
+
+export interface CreateEventInput {
+  name: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  venue: string;
+  description?: string;
+  template: EventTemplate;
 }
 
 export type DonationStatus = 'pending' | 'approved' | 'rejected';

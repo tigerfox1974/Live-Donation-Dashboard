@@ -14,7 +14,8 @@ import {
 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/Button';
-export type EventStatus = 'draft' | 'live' | 'closed' | 'archived';
+import type { EventRecord, EventStatus as EventStatusType } from '../types';
+export type EventStatus = EventStatusType;
 export interface ActiveEventData {
   id: string;
   name: string;
@@ -185,51 +186,20 @@ interface EventSelectorProps {
   onSelectEvent: (event: ActiveEventData) => void;
   onCreateNew?: () => void;
   currentEventId?: string | null;
+  events: EventRecord[];
 }
-// Mock events for selector
-const SELECTOR_EVENTS: (ActiveEventData & {
-  participantCount: number;
-  totalApproved: number;
-})[] = [
-{
-  id: 'evt-1',
-  name: '2024 Yılsonu Bağış Gecesi',
-  status: 'live',
-  date: '2024-12-15',
-  venue: 'Lefkoşa Merit Hotel',
-  participantCount: 150,
-  totalApproved: 89
-},
-{
-  id: 'evt-2',
-  name: '2024 Bahar Dayanışma Gecesi',
-  status: 'closed',
-  date: '2024-04-20',
-  venue: 'Girne Acapulco Resort',
-  participantCount: 120,
-  totalApproved: 95
-},
-{
-  id: 'evt-3',
-  name: '2025 Yeni Yıl Etkinliği',
-  status: 'draft',
-  date: '2025-01-10',
-  venue: 'Lefkoşa Büyük Han',
-  participantCount: 0,
-  totalApproved: 0
-}];
-
 export function EventSelectorModal({
   isOpen,
   onClose,
   onSelectEvent,
   onCreateNew,
-  currentEventId
+  currentEventId,
+  events
 }: EventSelectorProps) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<EventStatus | 'all'>('all');
   if (!isOpen) return null;
-  const filteredEvents = SELECTOR_EVENTS.filter((e) => {
+  const filteredEvents = events.filter((e) => {
     const matchesSearch =
     e.name.toLowerCase().includes(search.toLowerCase()) || (
     e.venue?.toLowerCase().includes(search.toLowerCase()) ?? false);

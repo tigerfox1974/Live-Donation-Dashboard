@@ -19,86 +19,40 @@ import { ProgressBar } from '../components/ProgressBar';
 import { cn } from '../lib/utils';
 import { POLVAK_LOGO_URL, ORG_SHORT_NAME } from '../lib/constants';
 import type { ActiveEventInfo } from '../App';
+import type { EventRecord } from '../types';
 interface ProjectionEventSelectorProps {
   onBack: () => void;
   onSelectEvent: (event: ActiveEventInfo) => void;
   broadcastingEventId: string | null;
+  events: EventRecord[];
 }
-// Mock events data (same as EventsConsole)
-const MOCK_EVENTS = [
-{
-  id: 'evt-1',
-  name: '2024 Yılsonu Bağış Gecesi',
-  date: '2024-12-15',
-  startTime: '19:00',
-  endTime: '23:00',
-  venue: 'Lefkoşa Merit Hotel',
-  description: 'Yıllık ana bağış etkinliği',
-  status: 'live' as const,
-  participantCount: 150,
-  itemCount: 5,
-  totalTarget: 168,
-  totalApproved: 89,
-  totalPending: 12,
-  totalRejected: 3
-},
-{
-  id: 'evt-2',
-  name: '2024 Bahar Dayanışma Gecesi',
-  date: '2024-04-20',
-  startTime: '19:30',
-  endTime: '22:30',
-  venue: 'Girne Acapulco Resort',
-  status: 'closed' as const,
-  participantCount: 120,
-  itemCount: 4,
-  totalTarget: 100,
-  totalApproved: 95,
-  totalPending: 0,
-  totalRejected: 5
-},
-{
-  id: 'evt-3',
-  name: '2025 Yeni Yıl Etkinliği',
-  date: '2025-01-10',
-  startTime: '20:00',
-  endTime: '00:00',
-  venue: 'Lefkoşa Büyük Han',
-  status: 'draft' as const,
-  participantCount: 0,
-  itemCount: 3,
-  totalTarget: 50,
-  totalApproved: 0,
-  totalPending: 0,
-  totalRejected: 0
-}];
-
 export function ProjectionEventSelector({
   onBack,
   onSelectEvent,
-  broadcastingEventId
+  broadcastingEventId,
+  events
 }: ProjectionEventSelectorProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   // Filter to show only live events, but also show broadcasting event if it exists
   const availableEvents = useMemo(() => {
-    let events = MOCK_EVENTS.filter((e) => e.status === 'live');
+    let filtered = events.filter((e) => e.status === 'live');
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      events = events.filter(
+      filtered = filtered.filter(
         (e) =>
         e.name.toLowerCase().includes(q) || e.venue.toLowerCase().includes(q)
       );
     }
-    return events;
-  }, [searchQuery]);
-  const broadcastingEvent = MOCK_EVENTS.find(
+    return filtered;
+  }, [events, searchQuery]);
+  const broadcastingEvent = events.find(
     (e) => e.id === broadcastingEventId
   );
-  const selectedEvent = MOCK_EVENTS.find((e) => e.id === selectedEventId);
+  const selectedEvent = events.find((e) => e.id === selectedEventId);
   const handleStartProjection = () => {
     if (selectedEventId) {
-      const event = MOCK_EVENTS.find((e) => e.id === selectedEventId);
+      const event = events.find((e) => e.id === selectedEventId);
       if (event) {
         onSelectEvent({
           id: event.id,

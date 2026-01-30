@@ -1,0 +1,73 @@
+import { EventRecord } from '../types';
+
+export const MOCK_EVENTS: EventRecord[] = [
+  {
+    id: 'evt-1',
+    name: '2024 Yılsonu Bağış Gecesi',
+    date: '2024-12-15',
+    startTime: '19:00',
+    endTime: '23:00',
+    venue: 'Lefkoşa Merit Hotel',
+    description: 'Yıllık ana bağış etkinliği',
+    status: 'live',
+    participantCount: 150,
+    itemCount: 5,
+    totalTarget: 168,
+    totalApproved: 89,
+    totalPending: 12,
+    totalRejected: 3,
+    lastUpdated: Date.now() - 300000,
+    createdAt: Date.now() - 86400000 * 30
+  },
+  {
+    id: 'evt-2',
+    name: '2024 Bahar Dayanışma Gecesi',
+    date: '2024-04-20',
+    startTime: '19:30',
+    endTime: '22:30',
+    venue: 'Girne Acapulco Resort',
+    status: 'closed',
+    participantCount: 120,
+    itemCount: 4,
+    totalTarget: 100,
+    totalApproved: 95,
+    totalPending: 0,
+    totalRejected: 5,
+    lastUpdated: Date.now() - 86400000 * 200,
+    createdAt: Date.now() - 86400000 * 250
+  },
+  {
+    id: 'evt-3',
+    name: '2025 Yeni Yıl Etkinliği',
+    date: '2025-01-10',
+    startTime: '20:00',
+    endTime: '00:00',
+    venue: 'Lefkoşa Büyük Han',
+    status: 'draft',
+    participantCount: 0,
+    itemCount: 3,
+    totalTarget: 50,
+    totalApproved: 0,
+    totalPending: 0,
+    totalRejected: 0,
+    lastUpdated: Date.now() - 3600000,
+    createdAt: Date.now() - 86400000 * 5
+  },
+  {
+    id: 'evt-4',
+    name: '2023 Sonbahar Gecesi',
+    date: '2023-10-15',
+    startTime: '19:00',
+    endTime: '22:00',
+    venue: 'Gazimağusa Palm Beach',
+    status: 'archived',
+    participantCount: 80,
+    itemCount: 3,
+    totalTarget: 60,
+    totalApproved: 58,
+    totalPending: 0,
+    totalRejected: 2,
+    lastUpdated: Date.now() - 86400000 * 400,
+    createdAt: Date.now() - 86400000 * 450
+  }
+];
