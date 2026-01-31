@@ -3,6 +3,7 @@ import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { ProgressBar } from '../components/ProgressBar';
 import { cn } from '../lib/utils';
+import { useEvent } from '../contexts/EventContext';
 import {
   Search,
   Plus,
@@ -1779,12 +1780,26 @@ function ParticipantsTab({
   eventId?: string;
   onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
 }) {
+  const { participants, donations, addParticipant, updateParticipant, deleteParticipant, getParticipantTotal } = useEvent();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showBulkQRModal, setShowBulkQRModal] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<any>(null);
   const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  const filteredParticipants = useMemo(() => {
+    return participants.filter((p) => {
+      const matchSearch = p.display_name.toLowerCase().includes(search.toLowerCase());
+      const matchType = typeFilter === 'all' || p.type === typeFilter;
+      const matchStatus = statusFilter === 'all' || p.status === statusFilter;
+      return matchSearch && matchType && matchStatus;
+    });
+  }, [participants, search, typeFilter, statusFilter]);
+
   const handleEdit = (participant: any) => {
     setSelectedParticipant(participant);
     setShowEditModal(true);
@@ -1805,15 +1820,21 @@ function ParticipantsTab({
                 className="pl-10 pr-4 py-2 border rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20" />
 
             </div>
-            <select className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20">
-              <option>Tüm Tipler</option>
-              <option>Kurum</option>
-              <option>Kişi</option>
+            <select 
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20">
+              <option value="all">Tüm Tipler</option>
+              <option value="ORG">Kurum</option>
+              <option value="PERSON">Kişi</option>
             </select>
-            <select className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20">
-              <option>Tüm Durumlar</option>
-              <option>Aktif</option>
-              <option>Pasif</option>
+            <select 
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20">
+              <option value="all">Tüm Durumlar</option>
+              <option value="active">Aktif</option>
+              <option value="inactive">Pasif</option>
             </select>
           </div>
           <div className="flex items-center gap-2">
@@ -1834,7 +1855,19 @@ function ParticipantsTab({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => alert('Etiket PDF özelliği yakında eklenecek.')}>
+              onClick={() => {
+                // Generate label PDF
+                const labelContent = filteredParticipants.map(p => 
+                  `${p.display_name}\nMasa: ${p.table_no || '-'} Koltuk: ${p.seat_label || '-'}\nToken: ${p.token || '-'}`
+                ).join('\n\n---\n\n');
+                const blob = new Blob([labelContent], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `katilimci-etiketleri-${Date.now()}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}>
 
               <Printer className="w-4 h-4 mr-2" /> Etiket PDF
             </Button>
@@ -1879,10 +1912,16 @@ function ParticipantsTab({
               </tr>
             </thead>
             <tbody className="divide-y">
-              {MOCK_PARTICIPANTS.map((p) =>
+              {filteredParticipants.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                    Katılımcı bulunamadı.
+                  </td>
+                </tr>
+              ) : filteredParticipants.map((p) =>
               <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
-                    {p.qr_generated ?
+                    {p.token ?
                   <QrCode className="w-5 h-5 text-green-600" /> :
 
                   <QrCode className="w-5 h-5 text-gray-300" />
@@ -1912,7 +1951,10 @@ function ParticipantsTab({
                     {p.table_no} {p.seat_label && ` / ${p.seat_label}`}
                   </td>
                   <td className="px-4 py-3 font-semibold text-[#1e3a5f]">
-                    {p.total_donations > 0 ? `${p.total_donations} TL` : '-'}
+                    {(() => {
+                      const total = getParticipantTotal(p.id);
+                      return total > 0 ? `${total} TL` : '-';
+                    })()}
                   </td>
                   <td className="px-4 py-3">
                     <span
@@ -1938,7 +1980,10 @@ function ParticipantsTab({
                       <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => alert('QR üretiliyor...')}>
+                      onClick={() => {
+                        setSelectedParticipant(p);
+                        setShowQRModal(true);
+                      }}>
 
                         <QrCode className="w-4 h-4" />
                       </Button>
@@ -1955,7 +2000,21 @@ function ParticipantsTab({
       {showAddModal &&
       <ParticipantFormModal
         mode="add"
-        onClose={() => setShowAddModal(false)} />
+        onClose={() => setShowAddModal(false)}
+        onSave={(data) => {
+          addParticipant({
+            display_name: data.display_name,
+            type: data.type as 'PERSON' | 'ORG',
+            table_no: data.table_no,
+            seat_label: data.seat_label,
+            status: data.status as 'active' | 'inactive',
+            eventId: eventId || ''
+          });
+          setShowAddModal(false);
+          if (eventId && onUpdateEventStats) {
+            onUpdateEventStats(eventId, { participantCount: participants.length + 1 });
+          }
+        }} />
 
       }
       {showEditModal && selectedParticipant &&
@@ -1965,6 +2024,17 @@ function ParticipantsTab({
         onClose={() => {
           setShowEditModal(false);
           setSelectedParticipant(null);
+        }}
+        onSave={(data) => {
+          updateParticipant(selectedParticipant.id, {
+            display_name: data.display_name,
+            type: data.type as 'PERSON' | 'ORG',
+            table_no: data.table_no,
+            seat_label: data.seat_label,
+            status: data.status as 'active' | 'inactive'
+          });
+          setShowEditModal(false);
+          setSelectedParticipant(null);
         }} />
 
       }
@@ -1972,13 +2042,44 @@ function ParticipantsTab({
       <ImportParticipantsModal
         eventId={eventId}
         onUpdateEventStats={onUpdateEventStats}
-        onClose={() => setShowImportModal(false)} />
+        onClose={() => setShowImportModal(false)}
+        onImport={(importedParticipants) => {
+          importedParticipants.forEach((p) => {
+            addParticipant({
+              display_name: p.display_name,
+              type: p.type as 'PERSON' | 'ORG',
+              table_no: p.table_no || '',
+              seat_label: p.seat_label || '',
+              status: (p.status as 'active' | 'inactive') || 'active',
+              eventId: eventId || ''
+            });
+          });
+          setShowImportModal(false);
+          if (eventId && onUpdateEventStats) {
+            onUpdateEventStats(eventId, { participantCount: participants.length + importedParticipants.length });
+          }
+        }} />
       }
       {showBulkQRModal &&
       <BulkQRModal
         onClose={() => setShowBulkQRModal(false)}
-        count={MOCK_PARTICIPANTS.length} />
+        count={filteredParticipants.length}
+        participants={filteredParticipants}
+        eventId={eventId}
+        onUpdateParticipants={(updatedList) => {
+          updatedList.forEach((p) => {
+            updateParticipant(p.id, { token: p.token, qr_generated: p.qr_generated });
+          });
+        }} />
 
+      }
+      {showQRModal && selectedParticipant &&
+      <ParticipantQRModal
+        participant={selectedParticipant}
+        onClose={() => {
+          setShowQRModal(false);
+          setSelectedParticipant(null);
+        }} />
       }
     </div>);
 
@@ -1990,15 +2091,20 @@ function ItemsTab({
   eventId?: string;
   onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
 }) {
+  const { items, addItem, updateItem, deleteItem, reorderItems, getItemTotal } = useEvent();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [isLocked, setIsLocked] = useState(false);
-  const [items, setItems] = useState(MOCK_ITEMS);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragOverItem, setDragOverItem] = useState<string | null>(null);
+  
+  const sortedItems = useMemo(() => {
+    return [...items].sort((a, b) => a.order - b.order);
+  }, [items]);
+
   const handleEdit = (item: any) => {
     setSelectedItem(item);
     setShowEditModal(true);
@@ -2039,24 +2145,25 @@ function ItemsTab({
   const handleDrop = (e: React.DragEvent, targetItemId: string) => {
     e.preventDefault();
     if (isLocked || !draggedItem || draggedItem === targetItemId) return;
-    const sortedItems = [...items].sort((a, b) => a.order - b.order);
-    const draggedIndex = sortedItems.findIndex((i) => i.id === draggedItem);
-    const targetIndex = sortedItems.findIndex((i) => i.id === targetItemId);
+    const currentSorted = [...items].sort((a, b) => a.order - b.order);
+    const draggedIndex = currentSorted.findIndex((i) => i.id === draggedItem);
+    const targetIndex = currentSorted.findIndex((i) => i.id === targetItemId);
     if (draggedIndex === -1 || targetIndex === -1) return;
-    // Reorder items
-    const newItems = [...sortedItems];
-    const [removed] = newItems.splice(draggedIndex, 1);
-    newItems.splice(targetIndex, 0, removed);
-    // Update order values
-    const updatedItems = newItems.map((item, index) => ({
-      ...item,
-      order: index + 1
-    }));
-    setItems(updatedItems);
+    // Use reorderItems from context - determine direction
+    if (draggedIndex < targetIndex) {
+      // Moving down
+      for (let i = draggedIndex; i < targetIndex; i++) {
+        reorderItems(draggedItem, 'down');
+      }
+    } else {
+      // Moving up
+      for (let i = draggedIndex; i > targetIndex; i--) {
+        reorderItems(draggedItem, 'up');
+      }
+    }
     setDraggedItem(null);
     setDragOverItem(null);
   };
-  const sortedItems = [...items].sort((a, b) => a.order - b.order);
   return (
     <div className="space-y-6">
       {/* Toolbar */}
@@ -2205,13 +2312,37 @@ function ItemsTab({
 
       {/* Modals */}
       {showAddModal &&
-      <ItemFormModal mode="add" onClose={() => setShowAddModal(false)} />
+      <ItemFormModal 
+        mode="add" 
+        onClose={() => setShowAddModal(false)}
+        onSave={(data) => {
+          addItem({
+            name: data.name,
+            initial_target: data.initial_target,
+            current: 0,
+            image_url: data.image_url || '',
+            order: items.length + 1
+          });
+          setShowAddModal(false);
+          if (eventId && onUpdateEventStats) {
+            onUpdateEventStats(eventId, { itemCount: items.length + 1 });
+          }
+        }} />
       }
       {showEditModal && selectedItem &&
       <ItemFormModal
         mode="edit"
         initialData={selectedItem}
         onClose={() => {
+          setShowEditModal(false);
+          setSelectedItem(null);
+        }}
+        onSave={(data) => {
+          updateItem(selectedItem.id, {
+            name: data.name,
+            initial_target: data.initial_target,
+            image_url: data.image_url || ''
+          });
           setShowEditModal(false);
           setSelectedItem(null);
         }} />
@@ -2221,7 +2352,22 @@ function ItemsTab({
       <ImportItemsModal
         eventId={eventId}
         onUpdateEventStats={onUpdateEventStats}
-        onClose={() => setShowImportModal(false)} />
+        onClose={() => setShowImportModal(false)}
+        onImport={(importedItems) => {
+          importedItems.forEach((item, index) => {
+            addItem({
+              name: item.name,
+              initial_target: item.initial_target || 1,
+              current: 0,
+              image_url: item.image_url || '',
+              order: items.length + index + 1
+            });
+          });
+          setShowImportModal(false);
+          if (eventId && onUpdateEventStats) {
+            onUpdateEventStats(eventId, { itemCount: items.length + importedItems.length });
+          }
+        }} />
       }
       {showDeleteConfirmModal && selectedItem &&
       <DeleteItemConfirmModal
@@ -2231,10 +2377,12 @@ function ItemsTab({
           setSelectedItem(null);
         }}
         onConfirm={() => {
-          // Handle delete
-          setItems(items.filter((i) => i.id !== selectedItem.id));
+          deleteItem(selectedItem.id);
           setShowDeleteConfirmModal(false);
           setSelectedItem(null);
+          if (eventId && onUpdateEventStats) {
+            onUpdateEventStats(eventId, { itemCount: items.length - 1 });
+          }
         }} />
 
       }
@@ -2242,50 +2390,150 @@ function ItemsTab({
 
 }
 function TransactionsTab() {
+  const { donations, participants, items } = useEvent();
   const [showExportModal, setShowExportModal] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [itemFilter, setItemFilter] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  const filteredDonations = useMemo(() => {
+    return donations.filter((d) => {
+      const matchStatus = statusFilter === 'all' || d.status === statusFilter;
+      const matchItem = itemFilter === 'all' || d.item_id === itemFilter;
+      const matchStartDate = !startDate || d.timestamp >= new Date(startDate).getTime();
+      const matchEndDate = !endDate || d.timestamp <= new Date(endDate).getTime() + 86400000;
+      return matchStatus && matchItem && matchStartDate && matchEndDate;
+    }).sort((a, b) => b.timestamp - a.timestamp);
+  }, [donations, statusFilter, itemFilter, startDate, endDate]);
+
+  const getParticipantName = (id: string) => {
+    const p = participants.find((p) => p.id === id);
+    return p?.display_name || 'Bilinmeyen';
+  };
+
+  const getItemName = (id: string) => {
+    const item = items.find((i) => i.id === id);
+    return item?.name || 'Bilinmeyen';
+  };
+
+  const handleExportCSV = () => {
+    const BOM = '\uFEFF';
+    const headers = ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum'];
+    const rows = filteredDonations.map((d) => [
+      new Date(d.timestamp).toLocaleString('tr-TR'),
+      getParticipantName(d.participant_id),
+      getItemName(d.item_id),
+      d.quantity.toString(),
+      d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
+    ]);
+    const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bagis-islemleri-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
       {/* Toolbar */}
       <Card className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <select className="px-3 py-2 border rounded-lg text-sm">
-              <option>Tüm Durumlar</option>
-              <option>Onaylı</option>
-              <option>Bekleyen</option>
-              <option>Reddedilen</option>
+            <select 
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm">
+              <option value="all">Tüm Durumlar</option>
+              <option value="approved">Onaylı</option>
+              <option value="pending">Bekleyen</option>
+              <option value="rejected">Reddedilen</option>
             </select>
-            <select className="px-3 py-2 border rounded-lg text-sm">
-              <option>Tüm Kalemler</option>
+            <select 
+              value={itemFilter}
+              onChange={(e) => setItemFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm">
+              <option value="all">Tüm Kalemler</option>
+              {items.map((item) => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
             </select>
             <input
               type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
               className="px-3 py-2 border rounded-lg text-sm" />
 
             <input
               type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
               className="px-3 py-2 border rounded-lg text-sm" />
 
           </div>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowExportModal(true)}>
+            onClick={handleExportCSV}>
 
-            <Download className="w-4 h-4 mr-2" /> Seçilenleri Dışa Aktar
+            <Download className="w-4 h-4 mr-2" /> CSV İndir
           </Button>
         </div>
       </Card>
 
-      {/* Transactions Table Placeholder */}
-      <Card>
-        <div className="p-8 text-center text-gray-500">
-          <Activity className="w-12 h-12 mx-auto mb-4 opacity-20" />
-          <p>İşlem tablosu burada görüntülenecek.</p>
-          <p className="text-sm text-gray-400 mt-2">
-            timestamp, katılımcı, kalem, adet, status, onaylayan, not
-          </p>
-        </div>
+      {/* Transactions Table */}
+      <Card className="overflow-hidden">
+        {filteredDonations.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            <Activity className="w-12 h-12 mx-auto mb-4 opacity-20" />
+            <p>Bağış işlemi bulunamadı.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Tarih/Saat</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Katılımcı</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Kalem</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Adet</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Durum</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {filteredDonations.map((d) => (
+                  <tr key={d.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm text-gray-600">
+                      {new Date(d.timestamp).toLocaleString('tr-TR')}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-900">
+                      {getParticipantName(d.participant_id)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {getItemName(d.item_id)}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-[#1e3a5f]">
+                      {d.quantity}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn(
+                        'px-2 py-1 rounded-full text-xs font-medium',
+                        d.status === 'approved' ? 'bg-green-100 text-green-700' :
+                        d.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-red-100 text-red-700'
+                      )}>
+                        {d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {showExportModal &&
@@ -2295,14 +2543,131 @@ function TransactionsTab() {
 
 }
 function ReportsTab() {
+  const { donations, participants, items, getItemTotal, getGrandTotal, getGrandTarget, getParticipantTotal } = useEvent();
   const [showReportDownloadModal, setShowReportDownloadModal] = useState(false);
-  const [selectedReportType, setSelectedReportType] = useState<string | null>(
-    null
-  );
-  const handleDownloadReport = (type: string) => {
-    setSelectedReportType(type);
-    setShowReportDownloadModal(true);
+  const [selectedReportType, setSelectedReportType] = useState<string | null>(null);
+
+  const getParticipantName = (id: string) => {
+    const p = participants.find((p) => p.id === id);
+    return p?.display_name || 'Bilinmeyen';
   };
+
+  const getItemName = (id: string) => {
+    const item = items.find((i) => i.id === id);
+    return item?.name || 'Bilinmeyen';
+  };
+
+  const handleDownloadReport = (type: string) => {
+    const BOM = '\uFEFF';
+    const approvedDonations = donations.filter(d => d.status === 'approved');
+
+    switch (type) {
+      case 'transactions-csv': {
+        const headers = ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum'];
+        const rows = donations.map((d) => [
+          new Date(d.timestamp).toLocaleString('tr-TR'),
+          getParticipantName(d.participant_id),
+          getItemName(d.item_id),
+          d.quantity.toString(),
+          d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
+        ]);
+        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
+        downloadFile(csv, 'tum-islemler.csv', 'text/csv;charset=utf-8');
+        break;
+      }
+      case 'transactions-xlsx': {
+        // For now, generate CSV with .xlsx extension (basic Excel compatibility)
+        const headers = ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum'];
+        const rows = donations.map((d) => [
+          new Date(d.timestamp).toLocaleString('tr-TR'),
+          getParticipantName(d.participant_id),
+          getItemName(d.item_id),
+          d.quantity.toString(),
+          d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
+        ]);
+        const csv = BOM + [headers, ...rows].map(row => row.join('\t')).join('\n');
+        downloadFile(csv, 'tum-islemler.xls', 'application/vnd.ms-excel;charset=utf-8');
+        break;
+      }
+      case 'summary': {
+        const grandTotal = getGrandTotal();
+        const grandTarget = getGrandTarget();
+        const progress = grandTarget > 0 ? ((grandTotal / grandTarget) * 100).toFixed(1) : '0';
+        const summary = `ETKİNLİK ÖZET RAPORU
+================================
+
+Toplam Hedef: ${grandTarget} adet
+Toplam Onaylı Bağış: ${grandTotal} adet
+İlerleme: %${progress}
+
+Katılımcı Sayısı: ${participants.length}
+Kalem Sayısı: ${items.length}
+Toplam İşlem: ${donations.length}
+Onaylı İşlem: ${approvedDonations.length}
+
+KALEM BAZINDA ÖZET:
+${items.map(item => `- ${item.name}: ${getItemTotal(item.id)}/${item.initial_target}`).join('\n')}
+
+Rapor Tarihi: ${new Date().toLocaleString('tr-TR')}
+`;
+        downloadFile(summary, 'ozet-rapor.txt', 'text/plain;charset=utf-8');
+        break;
+      }
+      case 'top-donors': {
+        const donorTotals = new Map<string, number>();
+        approvedDonations.forEach((d) => {
+          const current = donorTotals.get(d.participant_id) || 0;
+          donorTotals.set(d.participant_id, current + d.quantity);
+        });
+        const sortedDonors = Array.from(donorTotals.entries())
+          .map(([id, total]) => ({ name: getParticipantName(id), total }))
+          .sort((a, b) => b.total - a.total);
+        
+        const headers = ['Sıra', 'Katılımcı', 'Toplam Bağış'];
+        const rows = sortedDonors.map((d, i) => [(i + 1).toString(), d.name, d.total.toString()]);
+        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
+        downloadFile(csv, 'top-bagiscilar.csv', 'text/csv;charset=utf-8');
+        break;
+      }
+      case 'items-summary': {
+        const headers = ['Kalem', 'Hedef', 'Mevcut', 'Kalan', 'İlerleme %'];
+        const rows = items.map((item) => {
+          const total = getItemTotal(item.id);
+          const remaining = Math.max(0, item.initial_target - total);
+          const progress = item.initial_target > 0 ? ((total / item.initial_target) * 100).toFixed(1) : '0';
+          return [item.name, item.initial_target.toString(), total.toString(), remaining.toString(), progress];
+        });
+        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
+        downloadFile(csv, 'kalem-bazinda-ozet.csv', 'text/csv;charset=utf-8');
+        break;
+      }
+      case 'participants-list': {
+        const headers = ['Katılımcı', 'Tip', 'Masa', 'Koltuk', 'Toplam Bağış', 'Durum'];
+        const rows = participants.map((p) => [
+          p.display_name,
+          p.type === 'ORG' ? 'Kurum' : 'Kişi',
+          p.table_no || '-',
+          p.seat_label || '-',
+          getParticipantTotal(p.id).toString(),
+          p.status === 'active' ? 'Aktif' : 'Pasif'
+        ]);
+        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
+        downloadFile(csv, 'katilimci-listesi.csv', 'text/csv;charset=utf-8');
+        break;
+      }
+    }
+  };
+
+  const downloadFile = (content: string, filename: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -2879,12 +3244,14 @@ function DeleteConfirmModal({
 function ParticipantFormModal({
   mode,
   initialData,
-  onClose
-
-
-
-
-}: {mode: 'add' | 'edit';initialData?: any;onClose: () => void;}) {
+  onClose,
+  onSave
+}: {
+  mode: 'add' | 'edit';
+  initialData?: any;
+  onClose: () => void;
+  onSave?: (data: any) => void;
+}) {
   const [formData, setFormData] = useState({
     type: 'PERSON',
     display_name: '',
@@ -2894,6 +3261,15 @@ function ParticipantFormModal({
     status: 'active',
     ...initialData
   });
+
+  const handleSubmit = () => {
+    if (onSave) {
+      onSave(formData);
+    } else {
+      onClose();
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
@@ -3022,9 +3398,8 @@ function ParticipantFormModal({
           </Button>
           <Button
             variant="primary"
-            onClick={onClose}
+            onClick={handleSubmit}
             disabled={!formData.display_name}>
-
             {mode === 'add' ? 'Ekle' : 'Kaydet'}
           </Button>
         </div>
@@ -3035,11 +3410,13 @@ function ParticipantFormModal({
 function ImportParticipantsModal({
   onClose,
   eventId,
-  onUpdateEventStats
+  onUpdateEventStats,
+  onImport
 }: {
   onClose: () => void;
   eventId?: string;
   onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
+  onImport?: (participants: any[]) => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -3090,6 +3467,9 @@ function ImportParticipantsModal({
       })();
       const merged = [...existing, ...imported];
       localStorage.setItem(key, JSON.stringify(merged));
+      if (onImport) {
+        onImport(imported);
+      }
       if (onUpdateEventStats) {
         onUpdateEventStats(eventId, { participantCount: merged.length });
       }
@@ -3178,13 +3558,127 @@ function ImportParticipantsModal({
 }
 function BulkQRModal({
   onClose,
-  count
-
-
-
-}: {onClose: () => void;count: number;}) {
+  count,
+  participants,
+  eventId,
+  onUpdateParticipants
+}: {
+  onClose: () => void;
+  count: number;
+  participants?: any[];
+  eventId?: string;
+  onUpdateParticipants?: (participants: any[]) => void;
+}) {
   const [format, setFormat] = useState('pdf');
   const [size, setSize] = useState('60x40');
+  const [generating, setGenerating] = useState(false);
+  
+  const handleGenerate = async () => {
+    if (!participants || participants.length === 0 || !eventId) return;
+    setGenerating(true);
+    
+    try {
+      // Generate tokens for participants who don't have one
+      const baseUrl = window.location.origin + window.location.pathname;
+      const updatedParticipants = participants.map(p => {
+        if (!p.token) {
+          const token = `${eventId.slice(0,4)}-${p.id.slice(-4)}-${Math.random().toString(36).slice(2,6)}`.toUpperCase();
+          return { ...p, token, qr_generated: true };
+        }
+        return { ...p, qr_generated: true };
+      });
+      
+      // Update participants with tokens
+      if (onUpdateParticipants) {
+        onUpdateParticipants(updatedParticipants);
+      }
+      
+      // Generate QR codes as data URLs using canvas
+      const qrDataList: { name: string; token: string; qrDataUrl: string }[] = [];
+      
+      for (const p of updatedParticipants) {
+        const qrUrl = `${baseUrl}#/p/${p.token}`;
+        // Create simple QR-like placeholder (real implementation would use qrcode library)
+        const canvas = document.createElement('canvas');
+        const qrSize = size === '60x40' ? 150 : 200;
+        canvas.width = qrSize;
+        canvas.height = qrSize;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, qrSize, qrSize);
+          ctx.fillStyle = '#000000';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'center';
+          // Simple text representation
+          ctx.fillText(p.token || 'QR', qrSize/2, qrSize/2);
+          ctx.fillText(p.display_name.slice(0,15), qrSize/2, qrSize/2 + 15);
+        }
+        qrDataList.push({
+          name: p.display_name,
+          token: p.token,
+          qrDataUrl: canvas.toDataURL('image/png')
+        });
+      }
+      
+      if (format === 'pdf') {
+        // Generate simple HTML page with QR codes for printing
+        const printContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>QR Kodları - ${count} Katılımcı</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .card { border: 1px solid #ccc; padding: 15px; text-align: center; page-break-inside: avoid; }
+    .card img { width: ${size === '60x40' ? '100' : '120'}px; height: ${size === '60x40' ? '100' : '120'}px; }
+    .name { font-weight: bold; margin-top: 10px; font-size: 12px; }
+    .token { font-size: 10px; color: #666; margin-top: 5px; }
+    @media print { .grid { grid-template-columns: repeat(3, 1fr); } }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    ${qrDataList.map(q => `
+      <div class="card">
+        <img src="${q.qrDataUrl}" alt="QR" />
+        <div class="name">${q.name}</div>
+        <div class="token">${q.token}</div>
+      </div>
+    `).join('')}
+  </div>
+  <script>window.print();</script>
+</body>
+</html>`;
+        const blob = new Blob([printContent], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank');
+        if (win) {
+          win.onload = () => {
+            URL.revokeObjectURL(url);
+          };
+        }
+      } else {
+        // Download as text file with QR URLs (simplified - real implementation would create ZIP)
+        const content = qrDataList.map(q => `${q.name}\t${q.token}\t${baseUrl}#/p/${q.token}`).join('\n');
+        const blob = new Blob(['\uFEFF' + 'İsim\tToken\tURL\n' + content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `qr-kodlari-${eventId}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+      
+      onClose();
+    } catch (err) {
+      console.error('QR generation error:', err);
+    } finally {
+      setGenerating(false);
+    }
+  };
+  
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -3277,8 +3771,8 @@ function BulkQRModal({
           <Button variant="outline" onClick={onClose}>
             İptal
           </Button>
-          <Button variant="primary" onClick={onClose}>
-            <Printer className="w-4 h-4 mr-2" /> Üret ve İndir
+          <Button variant="primary" onClick={handleGenerate} disabled={generating || !participants?.length}>
+            <Printer className="w-4 h-4 mr-2" /> {generating ? 'Üretiliyor...' : 'Üret ve İndir'}
           </Button>
         </div>
       </div>
@@ -3288,12 +3782,9 @@ function BulkQRModal({
 function ItemFormModal({
   mode,
   initialData,
-  onClose
-
-
-
-
-}: {mode: 'add' | 'edit';initialData?: any;onClose: () => void;}) {
+  onClose,
+  onSave
+}: {mode: 'add' | 'edit';initialData?: any;onClose: () => void;onSave?: (data: any) => void;}) {
   const [formData, setFormData] = useState({
     name: '',
     initial_target: 10,
@@ -3302,6 +3793,15 @@ function ItemFormModal({
     notes: '',
     ...initialData
   });
+  
+  const handleSubmit = () => {
+    if (!formData.name || formData.initial_target <= 0) return;
+    if (onSave) {
+      onSave(formData);
+    }
+    onClose();
+  };
+  
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
@@ -3422,9 +3922,8 @@ function ItemFormModal({
           </Button>
           <Button
             variant="primary"
-            onClick={onClose}
+            onClick={handleSubmit}
             disabled={!formData.name || formData.initial_target <= 0}>
-
             {mode === 'add' ? 'Ekle' : 'Kaydet'}
           </Button>
         </div>
@@ -3435,11 +3934,13 @@ function ItemFormModal({
 function ImportItemsModal({
   onClose,
   eventId,
-  onUpdateEventStats
+  onUpdateEventStats,
+  onImport
 }: {
   onClose: () => void;
   eventId?: string;
   onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
+  onImport?: (items: any[]) => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -3492,6 +3993,9 @@ function ImportItemsModal({
         order: index + 1
       }));
       localStorage.setItem(key, JSON.stringify(merged));
+      if (onImport) {
+        onImport(imported);
+      }
       if (onUpdateEventStats) {
         const totalTarget = merged.reduce(
           (sum, item) => sum + (Number(item.initial_target) || 0),
@@ -3990,6 +4494,85 @@ function ReportDownloadModal({
     </div>);
 
 }
+
+function ParticipantQRModal({
+  participant,
+  onClose
+}: {
+  participant: any;
+  onClose: () => void;
+}) {
+  const baseUrl = window.location.origin + window.location.pathname;
+  const token = participant.token || `${participant.id.slice(-6)}-${Math.random().toString(36).slice(2,6)}`.toUpperCase();
+  const qrUrl = `${baseUrl}#/p/${token}`;
+  
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(qrUrl);
+  };
+  
+  const handleDownloadQR = () => {
+    // Create simple QR representation for download
+    const content = `Katılımcı: ${participant.display_name}\nToken: ${token}\nURL: ${qrUrl}`;
+    const blob = new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `qr-${participant.display_name.replace(/\s+/g, '_')}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+        <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
+          <h3 className="font-bold text-lg">QR Kod</h3>
+          <button onClick={onClose} className="text-white/70 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <div className="p-6 space-y-4">
+          <div className="text-center">
+            <div className="w-48 h-48 bg-gray-100 rounded-xl flex items-center justify-center mx-auto mb-4 border-2 border-dashed border-gray-300">
+              <div className="text-center">
+                <QrCode className="w-16 h-16 text-gray-400 mx-auto mb-2" />
+                <p className="text-xs text-gray-500 font-mono">{token}</p>
+              </div>
+            </div>
+            <h4 className="font-bold text-gray-900">{participant.display_name}</h4>
+            <p className="text-sm text-gray-500">{participant.type === 'ORG' ? 'Kuruluş' : 'Kişi'}</p>
+          </div>
+          
+          <div className="bg-gray-50 rounded-lg p-3">
+            <label className="text-xs text-gray-500 mb-1 block">Bağış Linki</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={qrUrl}
+                readOnly
+                className="flex-1 px-2 py-1 text-xs bg-white border rounded font-mono truncate"
+              />
+              <Button variant="outline" size="sm" onClick={handleCopyLink}>
+                <Copy className="w-3 h-3" />
+              </Button>
+            </div>
+          </div>
+        </div>
+        
+        <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose}>
+            Kapat
+          </Button>
+          <Button variant="primary" onClick={handleDownloadQR}>
+            <Download className="w-4 h-4 mr-2" /> İndir
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DeleteItemConfirmModal({
   itemName,
   onClose,
