@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, cloneElement } from 'react';
+import React, { useEffect, useMemo, useRef, useState, cloneElement } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useEvent } from '../contexts/EventContext';
 import { Button } from '../components/ui/Button';
@@ -38,17 +38,12 @@ import {
   LogOut,
   Calendar,
   Radio,
-  Square,
-  Archive,
   RefreshCw,
   ExternalLink,
-  Monitor,
   Tv,
   MapPin,
   WifiOff,
-  Loader2,
-  FileSpreadsheet,
-  FileText } from
+  Loader2 } from
 'lucide-react';
 import { cn } from '../lib/utils';
 import { Participant, ParticipantType, DonationItem } from '../types';
@@ -148,16 +143,24 @@ export function OperatorPanel({
     'live');
   const [showEventSelector, setShowEventSelector] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+  const [keyAction, setKeyAction] = useState<{
+    message: string;
+    type: 'success' | 'info' | 'error';
+  } | null>(null);
+  const keyActionTimeout = useRef<number | null>(null);
+  const [forceCrash, setForceCrash] = useState(false);
+  const showErrorTest = window.location.hostname === 'localhost';
   const {
     items,
     activeItemId,
-    setActiveItem,
     donations,
     participants,
     approveDonation,
     rejectDonation,
     undoLastApproval,
     setFinalScreen,
+    goToNextItem,
+    goToPrevItem,
     addParticipant,
     updateParticipant,
     addItem,
@@ -176,14 +179,19 @@ export function OperatorPanel({
   const activeItem = items[activeItemIndex];
   const isBroadcasting = activeEvent?.id === broadcastingEventId;
   const handleNextItem = () => {
-    if (activeItemIndex < items.length - 1) {
-      setActiveItem(items[activeItemIndex + 1].id);
-    }
+    goToNextItem();
   };
   const handlePrevItem = () => {
-    if (activeItemIndex > 0) {
-      setActiveItem(items[activeItemIndex - 1].id);
+    goToPrevItem();
+  };
+  const notifyKeyAction = (message: string, type: 'success' | 'info' | 'error') => {
+    setKeyAction({ message, type });
+    if (keyActionTimeout.current) {
+      window.clearTimeout(keyActionTimeout.current);
     }
+    keyActionTimeout.current = window.setTimeout(() => {
+      setKeyAction(null);
+    }, 2000);
   };
   const handleGoToEvents = () => {
     if (onGoToEvents) {
@@ -225,6 +233,9 @@ export function OperatorPanel({
         if (pending) {
           event.preventDefault();
           approveDonation(pending.id);
+          notifyKeyAction('Bağış onaylandı.', 'success');
+        } else {
+          notifyKeyAction('Bekleyen bağış yok.', 'info');
         }
       }
       if (event.key.toLowerCase() === 'r') {
@@ -232,19 +243,26 @@ export function OperatorPanel({
         if (pending) {
           event.preventDefault();
           rejectDonation(pending.id);
+          notifyKeyAction('Bağış reddedildi.', 'info');
+        } else {
+          notifyKeyAction('Bekleyen bağış yok.', 'info');
         }
       }
       if (event.key.toLowerCase() === 'n') {
         event.preventDefault();
         handleNextItem();
+        notifyKeyAction('Sonraki kaleme geçildi.', 'info');
       }
       if (event.key.toLowerCase() === 'p') {
         event.preventDefault();
         handlePrevItem();
+        notifyKeyAction('Önceki kaleme geçildi.', 'info');
       }
       if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
         setFinalScreen(true);
+        window.location.hash = '#/final';
+        notifyKeyAction('Final ekranına geçildi.', 'info');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -262,6 +280,9 @@ export function OperatorPanel({
       window.location.hash = '#/events';
     }
   };
+  if (forceCrash) {
+    throw new Error('ErrorBoundary test');
+  }
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
       {/* Top Bar */}
@@ -307,6 +328,13 @@ export function OperatorPanel({
             <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
             Sistem Aktif
           </span>
+          {showErrorTest && (
+            <button
+              onClick={() => setForceCrash(true)}
+              className="bg-red-500/20 text-red-100 px-3 py-1 rounded-full border border-red-400/40 hover:bg-red-500/30">
+              Test ErrorBoundary
+            </button>
+          )}
           {onLogout &&
           <button
             onClick={onLogout}
@@ -318,6 +346,23 @@ export function OperatorPanel({
           }
         </div>
       </header>
+
+      {keyAction && (
+        <div className="px-4 md:px-6 pt-3">
+          <div
+            className={cn(
+              'rounded-xl px-4 py-2 text-sm font-medium flex items-center gap-2 shadow-sm',
+              keyAction.type === 'success'
+                ? 'bg-emerald-100 text-emerald-700'
+                : keyAction.type === 'error'
+                  ? 'bg-red-100 text-red-700'
+                  : 'bg-blue-100 text-blue-700'
+            )}
+          >
+            {keyAction.message}
+          </div>
+        </div>
+      )}
 
       {/* No Event Selected State */}
       {!activeEvent ?
@@ -1663,13 +1708,10 @@ function ReportsTab({
   items,
   getItemTotal,
   getGrandTotal,
-  getGrandTarget,
-  getParticipantTotal
+  getGrandTarget
 }: any) {
   const [showReportDownloadModal, setShowReportDownloadModal] = useState(false);
-  const [selectedReportType, setSelectedReportType] = useState<string | null>(
-    null
-  );
+  const [, setSelectedReportType] = useState<string | null>(null);
   const approvedDonations = donations.filter(
     (d: any) => d.status === 'approved'
   );

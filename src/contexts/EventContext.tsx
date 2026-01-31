@@ -8,7 +8,6 @@ import React, {
   ReactNode
 } from 'react';
 import { Donation, DonationItem, EventContextType, EventData, Participant } from '../types';
-import { MOCK_ITEMS, MOCK_PARTICIPANTS, MOCK_DONATIONS } from '../data/mockData';
 
 const buildEventStorageKey = (eventId: string, suffix: string) =>
   `polvak_event_${eventId}_${suffix}`;
@@ -125,17 +124,17 @@ export function EventProvider({
       storedItems && storedItems.length > 0 ?
       storedItems :
       fromMap?.items ||
-      MOCK_ITEMS;
+      [];
     const baseParticipants =
       storedParticipants && storedParticipants.length > 0 ?
       storedParticipants :
       fromMap?.participants ||
-      MOCK_PARTICIPANTS;
+      [];
     const baseDonations =
       storedDonations && storedDonations.length > 0 ?
       storedDonations :
       fromMap?.donations ||
-      MOCK_DONATIONS;
+      [];
 
     setItems(baseItems);
     setParticipants(ensureParticipantTokens(baseParticipants, activeEventId));

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, cloneElement, Fragment } from 'react';
+import React, { useMemo, useState, useEffect, useRef, cloneElement, Fragment } from 'react';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { ProgressBar } from '../components/ProgressBar';
@@ -730,8 +730,8 @@ export function EventsConsole({
         </Card>
 
         {/* Events Table */}
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
+        <Card className="overflow-visible">
+          <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
@@ -1050,10 +1050,38 @@ function RowActionsMenu({
 
 }: {event: EventRecord;onView: () => void;onClone: () => void;onDelete: () => void;onSwitchToOperator?: () => void;onSwitchToProjection?: () => void;onSwitchToFinal?: () => void;onStatusChange: (type: 'live' | 'close' | 'archive') => void;onExport: () => void;onReport: () => void;}) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState<{top: number; left: number}>({ top: 0, left: 0 });
+
+  const handleOpen = () => {
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      // Menu'yu butonun sağ altına hizala (224px = w-56)
+      setMenuPos({
+        top: rect.bottom + 4,
+        left: Math.max(8, rect.right - 224)
+      });
+    }
+    setOpen(!open);
+  };
+
+  // Scroll veya resize olduğunda menüyü kapat
+  useEffect(() => {
+    if (!open) return;
+    const handleScroll = () => setOpen(false);
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', handleScroll);
+    return () => {
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', handleScroll);
+    };
+  }, [open]);
+
   return (
     <div className="relative flex justify-end">
       <button
-        onClick={() => setOpen(!open)}
+        ref={buttonRef}
+        onClick={handleOpen}
         className="p-2 hover:bg-gray-100 rounded-lg">
 
         <MoreVertical className="w-4 h-4 text-gray-500" />
@@ -1061,8 +1089,10 @@ function RowActionsMenu({
 
       {open &&
       <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border z-20 py-1">
+          <div className="fixed inset-0 z-[9998]" onClick={() => setOpen(false)} />
+          <div 
+            className="fixed w-56 bg-white rounded-lg shadow-lg border z-[9999] py-1"
+            style={{ top: menuPos.top, left: menuPos.left }}>
             <button
             onClick={() => {
               onView();

@@ -213,6 +213,7 @@ interface AppRoutesProps {
   activeEvent: ActiveEventInfo | null;
   broadcastingEventId: string | null;
   events: EventRecord[];
+  eventDataMap: Map<string, EventData>;
 }
 
 function AppRoutes({
@@ -238,7 +239,8 @@ function AppRoutes({
   handleUpdateEventStats,
   activeEvent,
   broadcastingEventId,
-  events
+  events,
+  eventDataMap
 }: AppRoutesProps) {
   const { isFinalScreen, participants, isHydrating } = useEvent();
 
@@ -311,12 +313,88 @@ function AppRoutes({
   if (hash.startsWith('#/p/')) {
     const token = hash.split('/')[2];
     if (token) {
-      const participantByToken = participants.find((p) => p.token === token);
+      // Önce aktif event katılımcılarında ara
+      let participantByToken = participants.find((p) => p.token === token);
+      let matchedEvent: ActiveEventInfo | null = activeEvent;
+
+      // Aktif eventte bulunamadıysa, tüm eventlerde ara
+      if (!participantByToken) {
+        // eventDataMap'te ara
+        for (const [eventId, eventData] of eventDataMap.entries()) {
+          const found = eventData.participants?.find((p) => p.token === token);
+          if (found) {
+            participantByToken = found;
+            const eventRecord = events.find((e) => e.id === eventId);
+            if (eventRecord) {
+              matchedEvent = {
+                id: eventRecord.id,
+                name: eventRecord.name,
+                status: eventRecord.status,
+                date: eventRecord.date,
+                venue: eventRecord.venue
+              };
+              // Event'i aktif yap
+              handleSetActiveEvent(matchedEvent);
+            }
+            break;
+          }
+        }
+        
+        // eventDataMap'te bulunamadıysa, localStorage'dan ara
+        if (!participantByToken) {
+          for (const event of events) {
+            try {
+              const key = `polvak_event_${event.id}_participants`;
+              const raw = localStorage.getItem(key);
+              if (raw) {
+                const storedParticipants = JSON.parse(raw);
+                if (Array.isArray(storedParticipants)) {
+                  const found = storedParticipants.find((p: any) => p.token === token);
+                  if (found) {
+                    participantByToken = found;
+                    matchedEvent = {
+                      id: event.id,
+                      name: event.name,
+                      status: event.status,
+                      date: event.date,
+                      venue: event.venue
+                    };
+                    // Event'i aktif yap
+                    handleSetActiveEvent(matchedEvent);
+                    break;
+                  }
+                }
+              }
+            } catch {
+              // localStorage hatası, devam et
+            }
+          }
+        }
+      }
+
+      if (participantByToken) {
+        return (
+          <DonorScreen
+            participantId={participantByToken.id}
+            activeEvent={matchedEvent}
+          />
+        );
+      }
+
+      // Katılımcı hiçbir yerde bulunamadı - geçersiz QR
       return (
-        <DonorScreen
-          participantId={participantByToken ? participantByToken.id : token}
-          activeEvent={activeEvent}
-        />
+        <div className="min-h-screen bg-gradient-to-br from-red-50 to-red-100 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-8 text-center max-w-md">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">Geçersiz QR Kodu</h2>
+            <p className="text-gray-600 mb-4">Bu QR kodu geçerli bir katılımcıya ait değil veya süresi dolmuş olabilir.</p>
+            <p className="text-sm text-gray-500">Lütfen organizatörle iletişime geçin.</p>
+          </div>
+        </div>
       );
     }
   }
@@ -829,6 +907,7 @@ function AppContent() {
           activeEvent={activeEvent}
           broadcastingEventId={broadcastingEventId}
           events={events}
+          eventDataMap={eventDataMap}
         />
       </ErrorBoundary>
     </EventProvider>
