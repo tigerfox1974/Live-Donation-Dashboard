@@ -6,6 +6,8 @@ export type EventTemplate = 'empty' | 'template' | 'import';
 
 export interface Participant {
   id: string;
+  token?: string;
+  eventId?: string;
   type: ParticipantType;
   display_name: string;
   table_no: string;
@@ -65,6 +67,13 @@ export interface Donation {
   timestamp: number;
 }
 
+export interface EventData {
+  eventId: string;
+  participants: Participant[];
+  items: DonationItem[];
+  donations: Donation[];
+}
+
 export interface AppState {
   items: DonationItem[];
   participants: Participant[];
@@ -75,7 +84,7 @@ export interface AppState {
 
 export interface EventContextType extends AppState {
   // Actions
-  addDonation: (participantId: string, quantity: number) => void;
+  addDonation: (participantId: string, quantity: number) => boolean;
   approveDonation: (donationId: string) => void;
   rejectDonation: (donationId: string) => void;
   undoLastApproval: () => void;

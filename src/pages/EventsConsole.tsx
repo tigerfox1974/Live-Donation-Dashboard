@@ -72,6 +72,7 @@ interface EventsConsoleProps {
   activeEventId?: string | null;
   events: EventRecord[];
   onCreateEvent: (input: CreateEventInput) => void;
+  onUpdateEventStatus: (eventIds: string[], status: EventStatus) => void;
 }
 const MOCK_AUDIT_LOG: AuditLogEntry[] = [
 {
@@ -204,7 +205,8 @@ export function EventsConsole({
   onSwitchToFinal,
   activeEventId,
   events,
-  onCreateEvent
+  onCreateEvent,
+  onUpdateEventStatus
 }: EventsConsoleProps) {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -226,6 +228,9 @@ export function EventsConsole({
   const [statusChangeType, setStatusChangeType] = useState<
     'live' | 'close' | 'archive' | null>(
     null);
+  const [pendingStatusEventIds, setPendingStatusEventIds] = useState<string[]>(
+    []
+  );
   const [showReportDownloadModal, setShowReportDownloadModal] = useState(false);
   const selectedEvent = events.find((e) => e.id === selectedEventId);
   // Stats
@@ -301,9 +306,27 @@ export function EventsConsole({
     setDeleteTargetId(id);
     setShowDeleteModal(true);
   };
-  const handleStatusChange = (type: 'live' | 'close' | 'archive') => {
+  const handleStatusChange = (
+    type: 'live' | 'close' | 'archive',
+    targetIds?: string[]
+  ) => {
+    const ids =
+      targetIds && targetIds.length > 0 ?
+      targetIds :
+      selectedRows.size > 0 ?
+      Array.from(selectedRows) :
+      selectedEventId ?
+      [selectedEventId] :
+      [];
+    if (ids.length === 0) return;
+    setPendingStatusEventIds(ids);
     setStatusChangeType(type);
     setShowConfirmStatusModal(true);
+  };
+  const mapStatusChangeType = (type: 'live' | 'close' | 'archive') => {
+    if (type === 'live') return 'live';
+    if (type === 'close') return 'closed';
+    return 'archived';
   };
   const handleSwitchToOperator = (event: EventRecord) => {
     if (onSwitchToOperator) {
@@ -348,6 +371,12 @@ export function EventsConsole({
         onSwitchToOperator={() => handleSwitchToOperator(selectedEvent)}
         onSwitchToProjection={() => handleSwitchToProjection(selectedEvent)}
         onSwitchToFinal={() => handleSwitchToFinal(selectedEvent)}
+        onUpdateStatus={(type) => {
+          onUpdateEventStatus(
+            [selectedEvent.id],
+            mapStatusChangeType(type)
+          );
+        }}
         isActiveEvent={activeEventId === selectedEvent.id} />);
 
 
@@ -672,7 +701,8 @@ export function EventsConsole({
                       handleSwitchToProjection(event)
                       }
                       onSwitchToFinal={() => handleSwitchToFinal(event)}
-                      onStatusChange={handleStatusChange}
+                      onStatusChange={(type) =>
+                      handleStatusChange(type, [event.id])}
                       onExport={() => setShowExportModal(true)}
                       onReport={() => setShowReportDownloadModal(true)} />
 
@@ -730,7 +760,10 @@ export function EventsConsole({
         type={statusChangeType}
         onClose={() => setShowConfirmStatusModal(false)}
         onConfirm={() => {
-          // Handle status change
+          const nextStatus = mapStatusChangeType(statusChangeType);
+          onUpdateEventStatus(pendingStatusEventIds, nextStatus);
+          setSelectedRows(new Set());
+          setPendingStatusEventIds([]);
           setShowConfirmStatusModal(false);
         }} />
 
@@ -994,6 +1027,7 @@ function EventDetailView({
   onSwitchToOperator,
   onSwitchToProjection,
   onSwitchToFinal,
+  onUpdateStatus,
   isActiveEvent
 
 
@@ -1003,7 +1037,7 @@ function EventDetailView({
 
 
 
-}: {event: EventRecord;onBack: () => void;auditLog: AuditLogEntry[];onSwitchToOperator?: () => void;onSwitchToProjection?: () => void;onSwitchToFinal?: () => void;isActiveEvent?: boolean;}) {
+}: {event: EventRecord;onBack: () => void;auditLog: AuditLogEntry[];onSwitchToOperator?: () => void;onSwitchToProjection?: () => void;onSwitchToFinal?: () => void;onUpdateStatus: (type: 'live' | 'close' | 'archive') => void;isActiveEvent?: boolean;}) {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'participants' | 'items' | 'transactions' | 'reports' | 'audit'>(
     'overview');
@@ -1282,7 +1316,10 @@ function EventDetailView({
       <ConfirmStatusChangeModal
         type={statusChangeType}
         onClose={() => setShowConfirmStatusModal(false)}
-        onConfirm={() => setShowConfirmStatusModal(false)} />
+        onConfirm={() => {
+          onUpdateStatus(statusChangeType);
+          setShowConfirmStatusModal(false);
+        }} />
 
       }
       {showReportDownloadModal &&
