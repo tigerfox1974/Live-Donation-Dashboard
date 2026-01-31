@@ -19,6 +19,7 @@ export interface Participant {
 
 export interface DonationItem {
   id: string;
+  eventId?: string;
   name: string;
   initial_target: number;
   image_url: string;
@@ -83,6 +84,7 @@ export interface AppState {
 }
 
 export interface EventContextType extends AppState {
+  isHydrating: boolean;
   // Actions
   addDonation: (participantId: string, quantity: number) => boolean;
   approveDonation: (donationId: string) => void;

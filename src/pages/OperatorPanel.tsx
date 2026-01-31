@@ -1,4 +1,5 @@
-import React, { useMemo, useState, cloneElement } from 'react';
+import React, { useEffect, useMemo, useState, cloneElement } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { useEvent } from '../contexts/EventContext';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
@@ -44,6 +45,7 @@ import {
   Monitor,
   Tv,
   MapPin,
+  WifiOff,
   Loader2,
   FileSpreadsheet,
   FileText } from
@@ -145,6 +147,7 @@ export function OperatorPanel({
     'live' | 'queue' | 'participants' | 'items' | 'reports'>(
     'live');
   const [showEventSelector, setShowEventSelector] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
   const {
     items,
     activeItemId,
@@ -201,6 +204,52 @@ export function OperatorPanel({
       }
     }
   };
+  useEffect(() => {
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    updateOnline();
+    window.addEventListener('online', updateOnline);
+    window.addEventListener('offline', updateOnline);
+    return () => {
+      window.removeEventListener('online', updateOnline);
+      window.removeEventListener('offline', updateOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (event.code === 'Space') {
+        const pending = donations.find((d) => d.status === 'pending');
+        if (pending) {
+          event.preventDefault();
+          approveDonation(pending.id);
+        }
+      }
+      if (event.key.toLowerCase() === 'r') {
+        const pending = donations.find((d) => d.status === 'pending');
+        if (pending) {
+          event.preventDefault();
+          rejectDonation(pending.id);
+        }
+      }
+      if (event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        handleNextItem();
+      }
+      if (event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        handlePrevItem();
+      }
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        setFinalScreen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [approveDonation, rejectDonation, donations, handleNextItem, handlePrevItem, setFinalScreen]);
   const handleSelectEvent = (event: ActiveEventInfo) => {
     if (onSetActiveEvent) {
       onSetActiveEvent(event);
@@ -216,8 +265,8 @@ export function OperatorPanel({
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
       {/* Top Bar */}
-      <header className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between shadow-md">
-        <div className="flex items-center space-x-4">
+      <header className="bg-[#1e3a5f] text-white px-4 md:px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-md">
+        <div className="flex items-center space-x-4 flex-wrap">
           <div className="flex items-center space-x-2">
             <button
               onClick={handleGoToPanelSelect}
@@ -250,7 +299,7 @@ export function OperatorPanel({
           }
         </div>
 
-        <div className="flex items-center space-x-4 text-sm">
+        <div className="flex items-center flex-wrap gap-2 text-sm">
           <span className="bg-white/10 px-3 py-1 rounded-full">
             Bekleyen: {pendingDonations.length}
           </span>
@@ -444,6 +493,16 @@ export function OperatorPanel({
         onCreateNew={handleGoToEvents}
         currentEventId={activeEvent?.id}
         events={events} />
+
+      {!isOnline &&
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-red-600 text-white p-8 rounded-2xl flex flex-col items-center max-w-2xl text-center shadow-2xl animate-pulse">
+            <WifiOff className="w-20 h-20 mb-6" />
+            <h2 className="text-3xl font-bold mb-3">Bağlantı Kesildi</h2>
+            <p className="text-lg">İnternet bağlantısı tekrar gelene kadar bekleyin.</p>
+          </div>
+        </div>
+      }
 
     </div>);
 
@@ -805,6 +864,8 @@ function ParticipantsTab({
     qr_generated: false
   });
   const [showBulkQRModal, setShowBulkQRModal] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrParticipant, setQrParticipant] = useState<Participant | null>(null);
   const stats = useMemo(() => {
     const total = participants.length;
     const active = participants.filter(
@@ -860,10 +921,15 @@ function ParticipantsTab({
     setEditingId(p.id);
     setShowForm(true);
   };
-  const handleGenerateQR = (id: string) => {
-    updateParticipant(id, {
+  const handleGenerateQR = (participant: Participant) => {
+    updateParticipant(participant.id, {
       qr_generated: true
     });
+    setQrParticipant({
+      ...participant,
+      qr_generated: true
+    });
+    setShowQRModal(true);
   };
   const handleDownloadLabels = () => {
     alert("Etiket PDF'i indiriliyor...");
@@ -1152,19 +1218,19 @@ function ParticipantsTab({
                       <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => handleEdit(p)}>
+                      onClick={() => handleEdit(p)}
+                      aria-label="Katılımcı düzenle">
 
                         <Edit2 className="w-4 h-4" />
                       </Button>
-                      {!p.qr_generated &&
-                    <Button
+                      <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => handleGenerateQR(p.id)}>
+                      onClick={() => handleGenerateQR(p)}
+                      aria-label="QR kod üret">
 
-                          <QrCode className="w-4 h-4" />
-                        </Button>
-                    }
+                        <QrCode className="w-4 h-4" />
+                      </Button>
                       <Button
                       size="sm"
                       variant="ghost"
@@ -1173,7 +1239,8 @@ function ParticipantsTab({
                         status:
                         p.status === 'active' ? 'inactive' : 'active'
                       })
-                      }>
+                      }
+                      aria-label="Katılımcı durum değiştir">
 
                         {p.status === 'active' ?
                       <XCircle className="w-4 h-4 text-gray-500" /> :
@@ -1220,6 +1287,15 @@ function ParticipantsTab({
       <BulkQRModal
         onClose={() => setShowBulkQRModal(false)}
         count={participants.length} />
+
+      }
+      {showQRModal && qrParticipant &&
+      <ParticipantQRModal
+        participant={qrParticipant}
+        onClose={() => {
+          setShowQRModal(false);
+          setQrParticipant(null);
+        }} />
 
       }
     </div>);
@@ -1558,14 +1634,16 @@ function ItemsTab({
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => handleEdit(item)}>
+                    onClick={() => handleEdit(item)}
+                    aria-label="Kalem düzenle">
 
                     <Edit2 className="w-4 h-4" />
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => deleteItem(item.id)}>
+                    onClick={() => deleteItem(item.id)}
+                    aria-label="Kalem sil">
 
                     <Trash2 className="w-4 h-4 text-red-500" />
                   </Button>
@@ -2072,4 +2150,70 @@ function ReportDownloadModal({ onClose }: {onClose: () => void;}) {
       </div>
     </div>);
 
+}
+function ParticipantQRModal({
+  participant,
+  onClose
+}: {participant: Participant;onClose: () => void;}) {
+  const token = participant.token;
+  const url = token ? `${window.location.origin}/#/p/${token}` : '';
+  const handleCopy = async () => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      alert('Bağlantı panoya kopyalandı.');
+    } catch {
+      alert('Kopyalama başarısız.');
+    }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
+          <h3 className="font-bold text-lg">QR Kod</h3>
+          <button onClick={onClose} className="text-white/70 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          <div className="text-center">
+            <h4 className="text-lg font-bold text-gray-900">
+              {participant.display_name}
+            </h4>
+            <p className="text-sm text-gray-500">Masa: {participant.table_no}</p>
+          </div>
+
+          <div className="flex items-center justify-center">
+            {token ? (
+              <div className="bg-white p-4 border rounded-xl">
+                <QRCodeCanvas value={url} size={200} includeMargin />
+              </div>
+            ) : (
+              <div className="text-sm text-red-600">
+                Token bulunamadı. Lütfen katılımcıyı güncelleyin.
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-gray-600">
+              Bağlantı
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={url}
+                className="w-full px-3 py-2 border rounded-lg text-xs bg-gray-50"
+              />
+              <Button variant="outline" onClick={handleCopy} disabled={!url}>
+                Kopyala
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

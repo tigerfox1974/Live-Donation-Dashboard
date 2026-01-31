@@ -8,7 +8,8 @@ import {
   Clock,
   Calendar,
   MapPin,
-  Shield } from
+  Shield,
+  WifiOff } from
 'lucide-react';
 import { cn } from '../lib/utils';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from '../lib/constants';
@@ -32,6 +33,7 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
     'idle' | 'submitting' | 'success' | 'blocked'>(
     'idle');
   const [lastActiveId, setLastActiveId] = useState<string | null>(activeItemId);
+  const [isOnline, setIsOnline] = useState(true);
   const participant = participants.find((p) => p.id === participantId);
   const activeItem = getActiveItem();
   // Reset state when active item changes
@@ -42,6 +44,16 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
       setQuantity(1);
     }
   }, [activeItemId, lastActiveId]);
+  useEffect(() => {
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    updateOnline();
+    window.addEventListener('online', updateOnline);
+    window.addEventListener('offline', updateOnline);
+    return () => {
+      window.removeEventListener('online', updateOnline);
+      window.removeEventListener('offline', updateOnline);
+    };
+  }, []);
   const handleSubmit = async () => {
     if (!participant || !activeItem) return;
     // Check if donations are blocked (during transition)
@@ -242,6 +254,16 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
           </div>
         </div>
       </div>
+
+      {!isOnline &&
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-red-600 text-white p-8 rounded-2xl flex flex-col items-center max-w-2xl text-center shadow-2xl animate-pulse">
+            <WifiOff className="w-20 h-20 mb-6" />
+            <h2 className="text-3xl font-bold mb-3">Bağlantı Kesildi</h2>
+            <p className="text-lg">Lütfen bağlantı geri gelince tekrar deneyin.</p>
+          </div>
+        </div>
+      }
     </div>);
 
 }

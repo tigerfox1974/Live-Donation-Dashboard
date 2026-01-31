@@ -13,6 +13,7 @@ import { MOCK_EVENTS } from './data/mockEvents';
 import type { CreateEventInput, EventData, EventRecord, EventStatus } from './types';
 import { Monitor, Settings, Users, FlaskConical } from 'lucide-react';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from './lib/constants';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Extended active event type with metadata
 export interface ActiveEventInfo {
@@ -26,6 +27,7 @@ export interface ActiveEventInfo {
 const AUTH_STORAGE_KEY = 'polvak_auth';
 const REDIRECT_STORAGE_KEY = 'redirectAfterLogin';
 const EVENTS_STORAGE_KEY = 'polvak_events';
+const AUDIT_LOG_KEY = 'polvak_audit_log';
 
 const PROTECTED_ROUTE_PREFIXES = [
   '#/panel-select',
@@ -112,6 +114,42 @@ const setStoredEvents = (events: EventRecord[]) => {
   }
 };
 
+const readAuditLog = () => {
+  try {
+    const raw = localStorage.getItem(AUDIT_LOG_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const appendAuditLog = (entry: {
+  eventId: string;
+  user: string;
+  action: string;
+  details?: string;
+}) => {
+  try {
+    const current = readAuditLog();
+    const next = [
+      {
+        id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        eventId: entry.eventId,
+        timestamp: Date.now(),
+        user: entry.user,
+        action: entry.action,
+        details: entry.details || ''
+      },
+      ...current
+    ];
+    localStorage.setItem(AUDIT_LOG_KEY, JSON.stringify(next));
+  } catch {
+    // no-op
+  }
+};
+
 const toActiveEventInfo = (event: EventRecord): ActiveEventInfo => ({
   id: event.id,
   name: event.name,
@@ -169,6 +207,9 @@ interface AppRoutesProps {
   handleGoToEvents: () => void;
   handleCreateEvent: (input: CreateEventInput) => void;
   handleUpdateEventStatus: (eventIds: string[], status: EventStatus) => void;
+  handleDeleteEvents: (eventIds: string[]) => void;
+  handleImportEvents: (payload: {events: EventRecord[];eventData?: EventData[]}) => void;
+  handleUpdateEventStats: (eventId: string, patch: Partial<EventRecord>) => void;
   activeEvent: ActiveEventInfo | null;
   broadcastingEventId: string | null;
   events: EventRecord[];
@@ -192,11 +233,35 @@ function AppRoutes({
   handleGoToEvents,
   handleCreateEvent,
   handleUpdateEventStatus,
+  handleDeleteEvents,
+  handleImportEvents,
+  handleUpdateEventStats,
   activeEvent,
   broadcastingEventId,
   events
 }: AppRoutesProps) {
-  const { isFinalScreen, participants } = useEvent();
+  const { isFinalScreen, participants, isHydrating } = useEvent();
+
+  const shouldShowLoader =
+    isHydrating &&
+    (hash.startsWith('#/operator') ||
+      hash.startsWith('#/display') ||
+      hash.startsWith('#/final') ||
+      hash.startsWith('#/events') ||
+      hash.startsWith('#/event-console') ||
+      hash.startsWith('#/projection-select') ||
+      hash.startsWith('#/p/'));
+
+  if (shouldShowLoader) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
+          <div className="w-12 h-12 border-4 border-[#1e3a5f] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-sm text-gray-600">Veriler yükleniyor...</p>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (isLoggedIn && (hash === '' || hash === '#' || hash === '#/')) {
@@ -246,7 +311,13 @@ function AppRoutes({
   if (hash.startsWith('#/p/')) {
     const token = hash.split('/')[2];
     if (token) {
-      return <DonorScreen participantId={token} activeEvent={activeEvent} />;
+      const participantByToken = participants.find((p) => p.token === token);
+      return (
+        <DonorScreen
+          participantId={participantByToken ? participantByToken.id : token}
+          activeEvent={activeEvent}
+        />
+      );
     }
   }
 
@@ -269,6 +340,9 @@ function AppRoutes({
           events={events}
           onCreateEvent={handleCreateEvent}
           onUpdateEventStatus={handleUpdateEventStatus}
+          onDeleteEvents={handleDeleteEvents}
+          onImportEvents={handleImportEvents}
+          onUpdateEventStats={handleUpdateEventStats}
         />
       </ProtectedRoute>
     );
@@ -445,6 +519,18 @@ function AppContent() {
   }, [events]);
 
   useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== EVENTS_STORAGE_KEY) return;
+      const next = getStoredEvents();
+      if (next && next.length > 0) {
+        setEvents(next);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  useEffect(() => {
     if (!activeEvent && events.length > 0) {
       const seed = events.find((event) => event.status === 'live') || events[0];
       setActiveEvent(seed ? toActiveEventInfo(seed) : null);
@@ -565,10 +651,78 @@ function AppContent() {
       createdAt: now
     };
     setEvents((prev) => [newEvent, ...prev]);
+    appendAuditLog({
+      eventId: newEvent.id,
+      user: 'admin',
+      action: 'Etkinlik oluşturuldu',
+      details: newEvent.name
+    });
+  };
+
+  const handleDeleteEvents = (eventIds: string[]) => {
+    if (eventIds.length === 0) return;
+    eventIds.forEach((eventId) => {
+      appendAuditLog({
+        eventId,
+        user: 'admin',
+        action: 'Etkinlik silindi'
+      });
+    });
+    setEvents((prev) => prev.filter((event) => !eventIds.includes(event.id)));
+    if (activeEvent && eventIds.includes(activeEvent.id)) {
+      setActiveEvent(null);
+    }
+  };
+
+  const handleImportEvents = (payload: {
+    events: EventRecord[];
+    eventData?: EventData[];
+  }) => {
+    setEvents((prev) => {
+      const map = new Map(prev.map((event) => [event.id, event]));
+      payload.events.forEach((event) => {
+        map.set(event.id, event);
+        appendAuditLog({
+          eventId: event.id,
+          user: 'admin',
+          action: 'Etkinlik içe aktarıldı',
+          details: event.name
+        });
+      });
+      return Array.from(map.values());
+    });
+    if (payload.eventData && payload.eventData.length > 0) {
+      payload.eventData.forEach((data) => {
+        try {
+          localStorage.setItem(
+            `polvak_event_${data.eventId}_items`,
+            JSON.stringify(data.items)
+          );
+          localStorage.setItem(
+            `polvak_event_${data.eventId}_participants`,
+            JSON.stringify(data.participants)
+          );
+          localStorage.setItem(
+            `polvak_event_${data.eventId}_donations`,
+            JSON.stringify(data.donations)
+          );
+        } catch {
+          // no-op
+        }
+      });
+    }
   };
 
   const handleUpdateEventStatus = (eventIds: string[], status: EventStatus) => {
     const now = Date.now();
+    eventIds.forEach((eventId) => {
+      appendAuditLog({
+        eventId,
+        user: 'admin',
+        action: 'Etkinlik durumu güncellendi',
+        details: status
+      });
+    });
     setEvents((prev) =>
       prev.map((event) =>
         eventIds.includes(event.id)
@@ -590,34 +744,93 @@ function AppContent() {
     }
   };
 
+  const handleUpdateEventStats = (
+    eventId: string,
+    patch: Partial<EventRecord>
+  ) => {
+    setEvents((prev) =>
+      prev.map((event) =>
+        event.id === eventId
+          ? {
+              ...event,
+              ...patch,
+              lastUpdated: Date.now()
+            }
+          : event
+      )
+    );
+  };
+
+  const handleEventDataChange = (eventData: EventData) => {
+    const totalTarget = eventData.items.reduce(
+      (sum, item) => sum + item.initial_target,
+      0
+    );
+    const totals = eventData.donations.reduce(
+      (acc, donation) => {
+        if (donation.status === 'approved') {
+          acc.approved += donation.quantity;
+        } else if (donation.status === 'pending') {
+          acc.pending += donation.quantity;
+        } else {
+          acc.rejected += donation.quantity;
+        }
+        return acc;
+      },
+      { approved: 0, pending: 0, rejected: 0 }
+    );
+    setEvents((prev) =>
+      prev.map((event) =>
+        event.id === eventData.eventId
+          ? {
+              ...event,
+              participantCount: eventData.participants.length,
+              itemCount: eventData.items.length,
+              totalTarget,
+              totalApproved: totals.approved,
+              totalPending: totals.pending,
+              totalRejected: totals.rejected,
+              lastUpdated: Date.now()
+            }
+          : event
+      )
+    );
+  };
+
   return (
     <EventProvider
       activeEventId={activeEvent?.id || null}
       eventDataMap={eventDataMap}
       onEventDataMapChange={setEventDataMap}
+      onEventDataChange={handleEventDataChange}
     >
-      <AppRoutes
-        hash={hash}
-        isLoggedIn={isLoggedIn}
-        handleLogin={handleLogin}
-        handleLogout={handleLogout}
-        handleAlreadyAuthenticatedRedirect={handleAlreadyAuthenticatedRedirect}
-        handleSetActiveEvent={handleSetActiveEvent}
-        handleSwitchToOperator={handleSwitchToOperator}
-        handleSwitchToProjection={handleSwitchToProjection}
-        handleSwitchToFinal={handleSwitchToFinal}
-        handleSelectOperator={handleSelectOperator}
-        handleSelectProjection={handleSelectProjection}
-        handleStartProjection={handleStartProjection}
-        handleSetBroadcasting={handleSetBroadcasting}
-        handleOpenEventDetail={handleOpenEventDetail}
-        handleGoToEvents={handleGoToEvents}
-        handleCreateEvent={handleCreateEvent}
-        handleUpdateEventStatus={handleUpdateEventStatus}
-        activeEvent={activeEvent}
-        broadcastingEventId={broadcastingEventId}
-        events={events}
-      />
+      <ErrorBoundary>
+        <AppRoutes
+          hash={hash}
+          isLoggedIn={isLoggedIn}
+          handleLogin={handleLogin}
+          handleLogout={handleLogout}
+          handleAlreadyAuthenticatedRedirect={handleAlreadyAuthenticatedRedirect}
+          handleSetActiveEvent={handleSetActiveEvent}
+          handleSwitchToOperator={handleSwitchToOperator}
+          handleSwitchToProjection={handleSwitchToProjection}
+          handleSwitchToFinal={handleSwitchToFinal}
+          handleSelectOperator={handleSelectOperator}
+          handleSelectProjection={handleSelectProjection}
+          handleStartProjection={handleStartProjection}
+          handleSetBroadcasting={handleSetBroadcasting}
+          handleOpenEventDetail={handleOpenEventDetail}
+          handleGoToEvents={handleGoToEvents}
+          handleCreateEvent={handleCreateEvent}
+          handleUpdateEventStatus={handleUpdateEventStatus}
+          handleDeleteEvents={handleDeleteEvents}
+          handleImportEvents={handleImportEvents}
+          handleUpdateEventStats={handleUpdateEventStats}
+          activeEvent={activeEvent}
+          broadcastingEventId={broadcastingEventId}
+          events={events}
+        />
+      </ErrorBoundary>
     </EventProvider>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, cloneElement, Fragment } from 'react';
+import React, { useMemo, useState, useEffect, cloneElement, Fragment } from 'react';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { ProgressBar } from '../components/ProgressBar';
@@ -55,7 +55,7 @@ import {
   Loader2 } from
 'lucide-react';
 import type { ActiveEventInfo } from '../App';
-import type { CreateEventInput, EventRecord, EventStatus } from '../types';
+import type { CreateEventInput, EventData, EventRecord, EventStatus } from '../types';
 // ============ TYPES ============
 interface AuditLogEntry {
   id: string;
@@ -73,6 +73,9 @@ interface EventsConsoleProps {
   events: EventRecord[];
   onCreateEvent: (input: CreateEventInput) => void;
   onUpdateEventStatus: (eventIds: string[], status: EventStatus) => void;
+  onDeleteEvents: (eventIds: string[]) => void;
+  onImportEvents: (payload: {events: EventRecord[];eventData?: EventData[]}) => void;
+  onUpdateEventStats: (eventId: string, patch: Partial<EventRecord>) => void;
 }
 const MOCK_AUDIT_LOG: AuditLogEntry[] = [
 {
@@ -115,6 +118,129 @@ const MOCK_AUDIT_LOG: AuditLogEntry[] = [
   action: 'Etkinlik oluşturuldu',
   details: ''
 }];
+
+const AUDIT_LOG_KEY = 'polvak_audit_log';
+
+const readAuditLog = () => {
+  try {
+    const raw = localStorage.getItem(AUDIT_LOG_KEY);
+    if (!raw) return [] as AuditLogEntry[];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as AuditLogEntry[]) : [];
+  } catch {
+    return [] as AuditLogEntry[];
+  }
+};
+
+const downloadTextFile = (filename: string, content: string, type: string) => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+};
+
+const buildEventsCsv = (events: EventRecord[]) => {
+  const header = [
+    'id',
+    'name',
+    'date',
+    'startTime',
+    'endTime',
+    'venue',
+    'status',
+    'participantCount',
+    'itemCount',
+    'totalTarget',
+    'totalApproved',
+    'totalPending',
+    'totalRejected',
+    'lastUpdated',
+    'createdAt'
+  ];
+  const rows = events.map((event) => [
+    event.id,
+    event.name,
+    event.date,
+    event.startTime,
+    event.endTime,
+    event.venue,
+    event.status,
+    event.participantCount,
+    event.itemCount,
+    event.totalTarget,
+    event.totalApproved,
+    event.totalPending,
+    event.totalRejected,
+    event.lastUpdated,
+    event.createdAt
+  ]);
+  const csv = [header, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  return `\uFEFF${csv}`;
+};
+
+const parseCsvCell = (cell: string) => {
+  const trimmed = cell.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/""/g, '"').trim();
+  }
+  return trimmed;
+};
+
+const detectDelimiter = (line: string) => {
+  const commaCount = (line.match(/,/g) || []).length;
+  const semicolonCount = (line.match(/;/g) || []).length;
+  return semicolonCount > commaCount ? ';' : ',';
+};
+
+const parseCsvLines = (content: string) => {
+  const lines = content
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return [] as string[][];
+  const delimiter = detectDelimiter(lines[0]);
+  return lines.map((line) => line.split(delimiter).map(parseCsvCell));
+};
+
+const parseEventsCsvRows = (rows: string[][]) => {
+  if (rows.length === 0) return [] as EventRecord[];
+  const header = rows[0].map((cell) => cell.toLowerCase());
+  const getIndex = (key: string) => header.indexOf(key);
+  const required = ['name', 'date', 'starttime', 'endtime', 'venue', 'status'];
+  const hasRequired = required.every((key) => getIndex(key) !== -1);
+  if (!hasRequired) return [] as EventRecord[];
+  return rows.slice(1).filter((row) => row.length > 0 && row[0]).map((row) => {
+    const now = Date.now();
+    const get = (key: string) => row[getIndex(key)] || '';
+    const toNumber = (key: string) => Number(get(key) || 0);
+    return {
+      id: get('id') || `evt-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      name: get('name') || 'Etkinlik',
+      date: get('date') || new Date().toISOString().slice(0, 10),
+      startTime: get('starttime') || '19:00',
+      endTime: get('endtime') || '23:00',
+      venue: get('venue') || '-',
+      description: get('description') || undefined,
+      status: (get('status') as EventStatus) || 'draft',
+      participantCount: toNumber('participantcount'),
+      itemCount: toNumber('itemcount'),
+      totalTarget: toNumber('totaltarget'),
+      totalApproved: toNumber('totalapproved'),
+      totalPending: toNumber('totalpending'),
+      totalRejected: toNumber('totalrejected'),
+      lastUpdated: toNumber('lastupdated') || now,
+      createdAt: toNumber('createdat') || now
+    };
+  });
+};
 
 // Mock Data for Tabs
 const MOCK_PARTICIPANTS = [
@@ -206,7 +332,10 @@ export function EventsConsole({
   activeEventId,
   events,
   onCreateEvent,
-  onUpdateEventStatus
+  onUpdateEventStatus,
+  onDeleteEvents,
+  onImportEvents,
+  onUpdateEventStats
 }: EventsConsoleProps) {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -232,7 +361,28 @@ export function EventsConsole({
     []
   );
   const [showReportDownloadModal, setShowReportDownloadModal] = useState(false);
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(() => {
+    const stored = readAuditLog();
+    return stored.length > 0 ? stored : MOCK_AUDIT_LOG;
+  });
   const selectedEvent = events.find((e) => e.id === selectedEventId);
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== AUDIT_LOG_KEY) return;
+      const next = readAuditLog();
+      if (next.length > 0) {
+        setAuditLog(next);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+  useEffect(() => {
+    const next = readAuditLog();
+    if (next.length > 0) {
+      setAuditLog(next);
+    }
+  }, [events]);
   // Stats
   const stats = useMemo(() => {
     const total = events.length;
@@ -367,7 +517,7 @@ export function EventsConsole({
       <EventDetailView
         event={selectedEvent}
         onBack={() => setSelectedEventId(null)}
-        auditLog={MOCK_AUDIT_LOG.filter((l) => l.eventId === selectedEvent.id)}
+        auditLog={auditLog.filter((l) => l.eventId === selectedEvent.id)}
         onSwitchToOperator={() => handleSwitchToOperator(selectedEvent)}
         onSwitchToProjection={() => handleSwitchToProjection(selectedEvent)}
         onSwitchToFinal={() => handleSwitchToFinal(selectedEvent)}
@@ -377,6 +527,7 @@ export function EventsConsole({
             mapStatusChangeType(type)
           );
         }}
+        onUpdateEventStats={onUpdateEventStats}
         isActiveEvent={activeEventId === selectedEvent.id} />);
 
 
@@ -508,6 +659,17 @@ export function EventsConsole({
                 onClick={() => setShowExportModal(true)}>
 
                   <Download className="w-4 h-4 mr-1" /> Dışa Aktar
+                </Button>
+                <Button
+                size="sm"
+                variant="ghost"
+                className="text-red-600"
+                onClick={() => {
+                  setDeleteTargetId(null);
+                  setShowDeleteModal(true);
+                }}>
+
+                  <Trash2 className="w-4 h-4 mr-1" /> Toplu Sil
                 </Button>
               </div>
             }
@@ -726,6 +888,7 @@ export function EventsConsole({
       {showNewEventModal &&
       <NewEventModal
         onClose={() => setShowNewEventModal(false)}
+        existingNames={events.map((event) => event.name)}
         onCreate={(input) => {
           onCreateEvent(input);
           setShowNewEventModal(false);
@@ -740,7 +903,15 @@ export function EventsConsole({
       <DeleteConfirmModal
         onClose={() => setShowDeleteModal(false)}
         onConfirm={() => {
-          // Handle delete
+          const ids = deleteTargetId ?
+          [deleteTargetId] :
+          selectedRows.size > 0 ?
+          Array.from(selectedRows) :
+          [];
+          if (ids.length > 0) {
+            onDeleteEvents(ids);
+          }
+          setSelectedRows(new Set());
           setShowDeleteModal(false);
           setDeleteTargetId(null);
         }} />
@@ -748,11 +919,17 @@ export function EventsConsole({
       }
 
       {showExportModal &&
-      <ExportModal onClose={() => setShowExportModal(false)} />
+      <ExportModal
+        onClose={() => setShowExportModal(false)}
+        events={events}
+        selectedEventIds={Array.from(selectedRows)} />
       }
 
       {showImportEventsModal &&
-      <ImportEventsModal onClose={() => setShowImportEventsModal(false)} />
+      <ImportEventsModal
+        onClose={() => setShowImportEventsModal(false)}
+        onImport={onImportEvents}
+        onUpdateEventStats={onUpdateEventStats} />
       }
 
       {showConfirmStatusModal && statusChangeType &&
@@ -771,7 +948,8 @@ export function EventsConsole({
 
       {showReportDownloadModal &&
       <ReportDownloadModal
-        onClose={() => setShowReportDownloadModal(false)} />
+        onClose={() => setShowReportDownloadModal(false)}
+        events={events} />
 
       }
     </div>);
@@ -1028,6 +1206,7 @@ function EventDetailView({
   onSwitchToProjection,
   onSwitchToFinal,
   onUpdateStatus,
+  onUpdateEventStats,
   isActiveEvent
 
 
@@ -1037,7 +1216,7 @@ function EventDetailView({
 
 
 
-}: {event: EventRecord;onBack: () => void;auditLog: AuditLogEntry[];onSwitchToOperator?: () => void;onSwitchToProjection?: () => void;onSwitchToFinal?: () => void;onUpdateStatus: (type: 'live' | 'close' | 'archive') => void;isActiveEvent?: boolean;}) {
+}: {event: EventRecord;onBack: () => void;auditLog: AuditLogEntry[];onSwitchToOperator?: () => void;onSwitchToProjection?: () => void;onSwitchToFinal?: () => void;onUpdateStatus: (type: 'live' | 'close' | 'archive') => void;onUpdateEventStats: (eventId: string, patch: Partial<EventRecord>) => void;isActiveEvent?: boolean;}) {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'participants' | 'items' | 'transactions' | 'reports' | 'audit'>(
     'overview');
@@ -1304,8 +1483,18 @@ function EventDetailView({
           onSwitchToFinal={onSwitchToFinal} />
 
         }
-        {activeTab === 'participants' && <ParticipantsTab />}
-        {activeTab === 'items' && <ItemsTab />}
+        {activeTab === 'participants' && (
+          <ParticipantsTab
+            eventId={event.id}
+            onUpdateEventStats={onUpdateEventStats}
+          />
+        )}
+        {activeTab === 'items' && (
+          <ItemsTab
+            eventId={event.id}
+            onUpdateEventStats={onUpdateEventStats}
+          />
+        )}
         {activeTab === 'transactions' && <TransactionsTab />}
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'audit' && <AuditTab auditLog={auditLog} />}
@@ -1324,11 +1513,14 @@ function EventDetailView({
       }
       {showReportDownloadModal &&
       <ReportDownloadModal
-        onClose={() => setShowReportDownloadModal(false)} />
+        onClose={() => setShowReportDownloadModal(false)}
+        event={event} />
 
       }
       {showImportParticipantsModal &&
       <ImportParticipantsModal
+        eventId={event.id}
+        onUpdateEventStats={onUpdateEventStats}
         onClose={() => setShowImportParticipantsModal(false)} />
 
       }
@@ -1550,7 +1742,13 @@ function OverviewTab({
     </div>);
 
 }
-function ParticipantsTab() {
+function ParticipantsTab({
+  eventId,
+  onUpdateEventStats
+}: {
+  eventId?: string;
+  onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
+}) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -1741,7 +1939,10 @@ function ParticipantsTab() {
 
       }
       {showImportModal &&
-      <ImportParticipantsModal onClose={() => setShowImportModal(false)} />
+      <ImportParticipantsModal
+        eventId={eventId}
+        onUpdateEventStats={onUpdateEventStats}
+        onClose={() => setShowImportModal(false)} />
       }
       {showBulkQRModal &&
       <BulkQRModal
@@ -1752,7 +1953,13 @@ function ParticipantsTab() {
     </div>);
 
 }
-function ItemsTab() {
+function ItemsTab({
+  eventId,
+  onUpdateEventStats
+}: {
+  eventId?: string;
+  onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
+}) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -1981,7 +2188,10 @@ function ItemsTab() {
 
       }
       {showImportModal &&
-      <ImportItemsModal onClose={() => setShowImportModal(false)} />
+      <ImportItemsModal
+        eventId={eventId}
+        onUpdateEventStats={onUpdateEventStats}
+        onClose={() => setShowImportModal(false)} />
       }
       {showDeleteConfirmModal && selectedItem &&
       <DeleteItemConfirmModal
@@ -2165,9 +2375,11 @@ function AuditTab({ auditLog }: {auditLog: AuditLogEntry[];}) {
 // ============ MODALS ============
 function NewEventModal({
   onClose,
-  onCreate
-}: {onClose: () => void;onCreate: (input: CreateEventInput) => void;}) {
+  onCreate,
+  existingNames
+}: {onClose: () => void;onCreate: (input: CreateEventInput) => void;existingNames: string[];}) {
   const [step, setStep] = useState(1);
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     date: '',
@@ -2177,6 +2389,16 @@ function NewEventModal({
     description: '',
     template: 'empty'
   });
+  const normalizedName = formData.name.trim().toLowerCase();
+  const nameExists =
+    normalizedName.length > 0 &&
+    existingNames.some((name) => name.trim().toLowerCase() === normalizedName);
+  const timeInvalid =
+    formData.startTime &&
+    formData.endTime &&
+    formData.endTime <= formData.startTime;
+  const canProceedStep1 =
+    formData.name.trim().length > 0 && !nameExists && !timeInvalid;
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
@@ -2243,6 +2465,11 @@ function NewEventModal({
                 placeholder="Örn: 2025 Bahar Bağış Gecesi" />
 
               </div>
+              {nameExists &&
+              <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+                  Bu isimde bir etkinlik zaten var.
+                </div>
+              }
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -2293,6 +2520,11 @@ function NewEventModal({
 
                 </div>
               </div>
+              {timeInvalid &&
+              <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+                  Bitiş saati, başlangıç saatinden küçük olamaz.
+                </div>
+              }
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Mekân
@@ -2423,6 +2655,14 @@ function NewEventModal({
           }
         </div>
 
+        {error &&
+        <div className="px-6 pb-4">
+            <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+              {error}
+            </div>
+          </div>
+        }
+
         {/* Footer */}
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-between">
           <Button
@@ -2434,6 +2674,10 @@ function NewEventModal({
           <Button
             variant="primary"
             onClick={() => {
+              if (step === 1 && !canProceedStep1) {
+                setError('Lütfen zorunlu alanları ve doğrulamaları tamamlayın.');
+                return;
+              }
               if (step === 3) {
                 onCreate({
                   name: formData.name,
@@ -2447,9 +2691,10 @@ function NewEventModal({
                 onClose();
                 return;
               }
+              setError(null);
               setStep(step + 1);
             }}
-            disabled={step === 1 && !formData.name}>
+            disabled={step === 1 && !canProceedStep1}>
 
             {step === 3 ? 'Taslak Oluştur' : 'İleri'}
           </Button>
@@ -2757,7 +3002,74 @@ function ParticipantFormModal({
     </div>);
 
 }
-function ImportParticipantsModal({ onClose }: {onClose: () => void;}) {
+function ImportParticipantsModal({
+  onClose,
+  eventId,
+  onUpdateEventStats
+}: {
+  onClose: () => void;
+  eventId?: string;
+  onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const handleImport = async () => {
+    if (!file || !eventId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const text = await file.text();
+      const rows = parseCsvLines(text);
+      const header = rows[0] || [];
+      const expected = ['display_name', 'type', 'table_no', 'seat_label', 'status'];
+      const headerNormalized = header.map((cell) => cell.toLowerCase());
+      const headerValid = expected.every((col) => headerNormalized.includes(col));
+      if (!headerValid) {
+        setError('CSV başlığı uyumsuz. Format: display_name, type, table_no, seat_label, status');
+        setLoading(false);
+        return;
+      }
+      const dataRows = rows.slice(1);
+      const imported = dataRows
+        .filter((row) => row[0])
+        .map((row, index) => ({
+          id: `p-${Date.now()}-${index}`,
+          display_name: row[0] || '',
+          type: (row[1] || 'PERSON').toUpperCase() === 'ORG' ? 'ORG' : 'PERSON',
+          table_no: row[2] || '-',
+          seat_label: row[3] || '',
+          status: (row[4] || 'active').toLowerCase() === 'inactive' ? 'inactive' : 'active',
+          qr_generated: false,
+          eventId
+        }));
+      if (imported.length === 0) {
+        setError('İçe aktarılacak kayıt bulunamadı.');
+        setLoading(false);
+        return;
+      }
+      const key = `polvak_event_${eventId}_participants`;
+      const existing = (() => {
+        try {
+          const raw = localStorage.getItem(key);
+          const parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+      const merged = [...existing, ...imported];
+      localStorage.setItem(key, JSON.stringify(merged));
+      if (onUpdateEventStats) {
+        onUpdateEventStats(eventId, { participantCount: merged.length });
+      }
+      onClose();
+    } catch {
+      setError('CSV dosyası okunamadı.');
+    } finally {
+      setLoading(false);
+    }
+  };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
@@ -2769,7 +3081,7 @@ function ImportParticipantsModal({ onClose }: {onClose: () => void;}) {
         </div>
 
         <div className="p-6 space-y-6">
-          <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer">
+          <label className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer block">
             <FileUp className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <p className="text-lg font-medium text-gray-900">
               Dosyayı buraya sürükleyin veya tıklayın
@@ -2777,7 +3089,27 @@ function ImportParticipantsModal({ onClose }: {onClose: () => void;}) {
             <p className="text-sm text-gray-500 mt-2">
               CSV veya Excel (.xlsx) dosyaları desteklenir
             </p>
-          </div>
+            <input
+              type="file"
+              accept=".csv,.xlsx,.txt"
+              className="hidden"
+              onChange={(e) => {
+                const nextFile = e.target.files?.[0] || null;
+                setFile(nextFile);
+                setError(null);
+              }}
+            />
+          </label>
+          {file && (
+            <div className="text-xs text-gray-600">
+              Seçilen dosya: <span className="font-medium">{file.name}</span>
+            </div>
+          )}
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+              {error}
+            </div>
+          )}
 
           <div className="space-y-2">
             <h4 className="font-medium text-gray-900">Örnek Format</h4>
@@ -2803,8 +3135,11 @@ function ImportParticipantsModal({ onClose }: {onClose: () => void;}) {
           <Button variant="outline" onClick={onClose}>
             İptal
           </Button>
-          <Button variant="primary" disabled>
-            İçe Aktar
+          <Button
+            variant="primary"
+            onClick={handleImport}
+            disabled={!file || loading || !eventId}>
+            {loading ? 'Yükleniyor...' : 'İçe Aktar'}
           </Button>
         </div>
       </div>
@@ -3067,7 +3402,83 @@ function ItemFormModal({
     </div>);
 
 }
-function ImportItemsModal({ onClose }: {onClose: () => void;}) {
+function ImportItemsModal({
+  onClose,
+  eventId,
+  onUpdateEventStats
+}: {
+  onClose: () => void;
+  eventId?: string;
+  onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const handleImport = async () => {
+    if (!file || !eventId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const text = await file.text();
+      const rows = parseCsvLines(text);
+      const header = rows[0] || [];
+      const expected = ['name', 'initial_target', 'image_url', 'status'];
+      const headerNormalized = header.map((cell) => cell.toLowerCase());
+      const headerValid = expected.every((col) => headerNormalized.includes(col));
+      if (!headerValid) {
+        setError('CSV başlığı uyumsuz. Format: name, initial_target, image_url, status');
+        setLoading(false);
+        return;
+      }
+      const dataRows = rows.slice(1);
+      const imported = dataRows
+        .filter((row) => row[0])
+        .map((row, index) => ({
+          id: `item-${Date.now()}-${index}`,
+          name: row[0] || '',
+          initial_target: Number(row[1] || 0),
+          image_url: row[2] || '',
+          status: (row[3] || 'active').toLowerCase() === 'inactive' ? 'inactive' : 'active',
+          order: index + 1,
+          eventId
+        }));
+      if (imported.length === 0) {
+        setError('İçe aktarılacak kayıt bulunamadı.');
+        setLoading(false);
+        return;
+      }
+      const key = `polvak_event_${eventId}_items`;
+      const existing = (() => {
+        try {
+          const raw = localStorage.getItem(key);
+          const parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+      const merged = [...existing, ...imported].map((item, index) => ({
+        ...item,
+        order: index + 1
+      }));
+      localStorage.setItem(key, JSON.stringify(merged));
+      if (onUpdateEventStats) {
+        const totalTarget = merged.reduce(
+          (sum, item) => sum + (Number(item.initial_target) || 0),
+          0
+        );
+        onUpdateEventStats(eventId, {
+          itemCount: merged.length,
+          totalTarget
+        });
+      }
+      onClose();
+    } catch {
+      setError('CSV dosyası okunamadı.');
+    } finally {
+      setLoading(false);
+    }
+  };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
@@ -3079,7 +3490,7 @@ function ImportItemsModal({ onClose }: {onClose: () => void;}) {
         </div>
 
         <div className="p-6 space-y-6">
-          <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer">
+          <label className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer block">
             <FileUp className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <p className="text-lg font-medium text-gray-900">
               Dosyayı buraya sürükleyin veya tıklayın
@@ -3087,7 +3498,27 @@ function ImportItemsModal({ onClose }: {onClose: () => void;}) {
             <p className="text-sm text-gray-500 mt-2">
               Sadece CSV dosyaları desteklenir
             </p>
-          </div>
+            <input
+              type="file"
+              accept=".csv,.txt"
+              className="hidden"
+              onChange={(e) => {
+                const nextFile = e.target.files?.[0] || null;
+                setFile(nextFile);
+                setError(null);
+              }}
+            />
+          </label>
+          {file && (
+            <div className="text-xs text-gray-600">
+              Seçilen dosya: <span className="font-medium">{file.name}</span>
+            </div>
+          )}
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+              {error}
+            </div>
+          )}
 
           <div className="space-y-2">
             <h4 className="font-medium text-gray-900">Örnek Format</h4>
@@ -3105,8 +3536,11 @@ function ImportItemsModal({ onClose }: {onClose: () => void;}) {
           <Button variant="outline" onClick={onClose}>
             İptal
           </Button>
-          <Button variant="primary" disabled>
-            İçe Aktar
+          <Button
+            variant="primary"
+            onClick={handleImport}
+            disabled={!file || loading || !eventId}>
+            {loading ? 'Yükleniyor...' : 'İçe Aktar'}
           </Button>
         </div>
       </div>
@@ -3114,14 +3548,62 @@ function ImportItemsModal({ onClose }: {onClose: () => void;}) {
 
 }
 // ============ NEWLY ADDED MODALS ============
-function ExportModal({ onClose }: {onClose: () => void;}) {
-  const [format, setFormat] = useState('csv');
-  const [scope, setScope] = useState('all');
+function ExportModal({
+  onClose,
+  events = [],
+  selectedEventIds = []
+}: {
+  onClose: () => void;
+  events?: EventRecord[];
+  selectedEventIds?: string[];
+}) {
+  const [format, setFormat] = useState<'csv' | 'json'>('csv');
+  const [scope, setScope] = useState<'all' | 'selected'>('all');
+  const hasSelection = selectedEventIds.length > 0;
+  const targetEvents =
+    scope === 'selected' && hasSelection
+      ? events.filter((event) => selectedEventIds.includes(event.id))
+      : events;
   const handleDownload = () => {
-    // Simulate download
-    setTimeout(() => {
+    if (targetEvents.length === 0) return;
+    if (format === 'csv') {
+      const csv = buildEventsCsv(targetEvents);
+      downloadTextFile('events.csv', csv, 'text/csv;charset=utf-8');
       onClose();
-    }, 1000);
+      return;
+    }
+    const eventData = targetEvents.map((event) => {
+      try {
+        const items = JSON.parse(
+          localStorage.getItem(`polvak_event_${event.id}_items`) || '[]'
+        );
+        const participants = JSON.parse(
+          localStorage.getItem(`polvak_event_${event.id}_participants`) || '[]'
+        );
+        const donations = JSON.parse(
+          localStorage.getItem(`polvak_event_${event.id}_donations`) || '[]'
+        );
+        return {
+          eventId: event.id,
+          items,
+          participants,
+          donations
+        } as EventData;
+      } catch {
+        return {
+          eventId: event.id,
+          items: [],
+          participants: [],
+          donations: []
+        } as EventData;
+      }
+    });
+    const payload = JSON.stringify({
+      events: targetEvents,
+      eventData
+    }, null, 2);
+    downloadTextFile('events-backup.json', payload, 'application/json');
+    onClose();
   };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -3139,10 +3621,10 @@ function ExportModal({ onClose }: {onClose: () => void;}) {
               Format
             </label>
             <div className="grid grid-cols-3 gap-3">
-              {['csv', 'xlsx', 'pdf'].map((f) =>
+              {['csv', 'json'].map((f) =>
               <button
                 key={f}
-                onClick={() => setFormat(f)}
+                onClick={() => setFormat(f as 'csv' | 'json')}
                 className={cn(
                   'p-3 border rounded-lg text-sm text-center uppercase transition-colors',
                   format === f ?
@@ -3189,7 +3671,10 @@ function ExportModal({ onClose }: {onClose: () => void;}) {
           <Button variant="outline" onClick={onClose}>
             İptal
           </Button>
-          <Button variant="primary" onClick={handleDownload}>
+          <Button
+            variant="primary"
+            onClick={handleDownload}
+            disabled={targetEvents.length === 0 || (scope === 'selected' && !hasSelection)}>
             <Download className="w-4 h-4 mr-2" /> İndir
           </Button>
         </div>
@@ -3197,7 +3682,84 @@ function ExportModal({ onClose }: {onClose: () => void;}) {
     </div>);
 
 }
-function ImportEventsModal({ onClose }: {onClose: () => void;}) {
+function ImportEventsModal({
+  onClose,
+  onImport,
+  onUpdateEventStats
+}: {
+  onClose: () => void;
+  onImport?: (payload: {events: EventRecord[];eventData?: EventData[]}) => void;
+  onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const handleImport = async () => {
+    if (!file || !onImport) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const text = await file.text();
+      const isCsv = file.name.toLowerCase().endsWith('.csv');
+      if (isCsv) {
+        const rows = parseCsvLines(text);
+        const events = parseEventsCsvRows(rows);
+        if (events.length === 0) {
+          setError('CSV başlığı uyumsuz veya etkinlik kaydı bulunamadı.');
+          setLoading(false);
+          return;
+        }
+        onImport({ events });
+        onClose();
+        return;
+      }
+      const parsed = JSON.parse(text);
+      const events: EventRecord[] = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.events)
+          ? parsed.events
+          : [];
+      const eventData: EventData[] = Array.isArray(parsed.eventData)
+        ? parsed.eventData
+        : [];
+      if (events.length === 0) {
+        setError('Geçerli etkinlik kaydı bulunamadı.');
+        setLoading(false);
+        return;
+      }
+      onImport({ events, eventData: eventData.length > 0 ? eventData : undefined });
+      if (onUpdateEventStats && eventData.length > 0) {
+        eventData.forEach((data) => {
+          const totalTarget = data.items.reduce(
+            (sum, item) => sum + item.initial_target,
+            0
+          );
+          const totals = data.donations.reduce(
+            (acc, donation) => {
+              if (donation.status === 'approved') acc.approved += donation.quantity;
+              else if (donation.status === 'pending') acc.pending += donation.quantity;
+              else acc.rejected += donation.quantity;
+              return acc;
+            },
+            { approved: 0, pending: 0, rejected: 0 }
+          );
+          onUpdateEventStats(data.eventId, {
+            participantCount: data.participants.length,
+            itemCount: data.items.length,
+            totalTarget,
+            totalApproved: totals.approved,
+            totalPending: totals.pending,
+            totalRejected: totals.rejected
+          });
+        });
+      }
+      onClose();
+    } catch {
+      setError('Dosya okunamadı veya JSON formatı hatalı.');
+    } finally {
+      setLoading(false);
+    }
+  };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
@@ -3209,23 +3771,41 @@ function ImportEventsModal({ onClose }: {onClose: () => void;}) {
         </div>
 
         <div className="p-6 space-y-6">
-          <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer">
+          <label className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer block">
             <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <p className="text-lg font-medium text-gray-900">
               Yedek dosyasını buraya sürükleyin
             </p>
-            <p className="text-sm text-gray-500 mt-2">
-              .json veya .zip formatında yedek dosyaları
-            </p>
-          </div>
+            <p className="text-sm text-gray-500 mt-2">.json veya .csv formatında</p>
+            <input
+              type="file"
+              accept=".json,.csv"
+              className="hidden"
+              onChange={(e) => {
+                const nextFile = e.target.files?.[0] || null;
+                setFile(nextFile);
+                setError(null);
+              }}
+            />
+          </label>
+          {file && (
+            <div className="text-xs text-gray-600">
+              Seçilen dosya: <span className="font-medium">{file.name}</span>
+            </div>
+          )}
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+              {error}
+            </div>
+          )}
         </div>
 
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
           <Button variant="outline" onClick={onClose}>
             İptal
           </Button>
-          <Button variant="primary" disabled>
-            İçe Aktar
+          <Button variant="primary" onClick={handleImport} disabled={!file || loading || !onImport}>
+            {loading ? 'Yükleniyor...' : 'İçe Aktar'}
           </Button>
         </div>
       </div>
@@ -3298,14 +3878,24 @@ function ConfirmStatusChangeModal({
     </div>);
 
 }
-function ReportDownloadModal({ onClose }: {onClose: () => void;}) {
+function ReportDownloadModal({
+  onClose,
+  events = [],
+  event
+}: {
+  onClose: () => void;
+  events?: EventRecord[];
+  event?: EventRecord;
+}) {
   const [loading, setLoading] = useState(false);
   const handleDownload = () => {
+    const targetEvents = event ? [event] : events;
+    if (targetEvents.length === 0) return;
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      onClose();
-    }, 1500);
+    const csv = buildEventsCsv(targetEvents);
+    downloadTextFile('event-report.csv', csv, 'text/csv;charset=utf-8');
+    setLoading(false);
+    onClose();
   };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">

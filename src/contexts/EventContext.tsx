@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useEffect,
   useState,
+  useRef,
   createContext,
   useContext,
   ReactNode
@@ -70,13 +71,15 @@ interface EventProviderProps {
   activeEventId: string | null;
   eventDataMap: Map<string, EventData>;
   onEventDataMapChange: React.Dispatch<React.SetStateAction<Map<string, EventData>>>;
+  onEventDataChange?: (eventData: EventData) => void;
 }
 
 export function EventProvider({
   children,
   activeEventId,
   eventDataMap,
-  onEventDataMapChange
+  onEventDataMapChange,
+  onEventDataChange
 }: EventProviderProps) {
   const [items, setItems] = useState<DonationItem[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -85,9 +88,16 @@ export function EventProvider({
   const [isFinalScreen, setIsFinalScreen] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionCountdown, setTransitionCountdown] = useState(0);
+  const [isHydrating, setIsHydrating] = useState(true);
   const canAcceptDonations = !isTransitioning;
+  const eventDataMapRef = useRef(eventDataMap);
 
   useEffect(() => {
+    eventDataMapRef.current = eventDataMap;
+  }, [eventDataMap]);
+
+  useEffect(() => {
+    setIsHydrating(true);
     if (!activeEventId) {
       setItems([]);
       setParticipants([]);
@@ -96,10 +106,11 @@ export function EventProvider({
       setIsFinalScreen(false);
       setIsTransitioning(false);
       setTransitionCountdown(0);
+      setIsHydrating(false);
       return;
     }
 
-    const fromMap = eventDataMap.get(activeEventId);
+    const fromMap = eventDataMapRef.current.get(activeEventId);
     const storedItems = readStorageArray<DonationItem>(
       getEventItemsKey(activeEventId)
     );
@@ -143,7 +154,46 @@ export function EventProvider({
     setIsFinalScreen(false);
     setIsTransitioning(false);
     setTransitionCountdown(0);
-  }, [activeEventId, eventDataMap]);
+    setIsHydrating(false);
+  }, [activeEventId]);
+
+  useEffect(() => {
+    if (!activeEventId) return;
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key) return;
+      const itemsKey = getEventItemsKey(activeEventId);
+      const participantsKey = getEventParticipantsKey(activeEventId);
+      const donationsKey = getEventDonationsKey(activeEventId);
+      const activeItemKey = getEventActiveItemKey(activeEventId);
+      if (
+        event.key !== itemsKey &&
+        event.key !== participantsKey &&
+        event.key !== donationsKey &&
+        event.key !== activeItemKey
+      ) {
+        return;
+      }
+      if (event.key === itemsKey) {
+        const nextItems = readStorageArray<DonationItem>(itemsKey) || [];
+        setItems(nextItems);
+      }
+      if (event.key === participantsKey) {
+        const nextParticipants =
+          readStorageArray<Participant>(participantsKey) || [];
+        setParticipants(ensureParticipantTokens(nextParticipants, activeEventId));
+      }
+      if (event.key === donationsKey) {
+        const nextDonations = readStorageArray<Donation>(donationsKey) || [];
+        setDonations(nextDonations);
+      }
+      if (event.key === activeItemKey) {
+        const nextActiveItemId = readStorageValue(activeItemKey);
+        setActiveItemId(nextActiveItemId || null);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [activeEventId]);
 
   useEffect(() => {
     if (!activeEventId) return;
@@ -208,7 +258,10 @@ export function EventProvider({
       next.set(activeEventId, payload);
       return next;
     });
-  }, [activeEventId, items, participants, donations, onEventDataMapChange]);
+    if (onEventDataChange) {
+      onEventDataChange(payload);
+    }
+  }, [activeEventId, items, participants, donations, onEventDataMapChange, onEventDataChange]);
 
   useEffect(() => {
     if (!items.length) {
@@ -317,7 +370,8 @@ export function EventProvider({
   const addItem = (item: Omit<DonationItem, 'id'>) => {
     const newItem = {
       ...item,
-      id: `item-${Date.now()}`
+      id: `item-${Date.now()}`,
+      eventId: item.eventId || activeEventId || item.eventId
     };
     setItems((prev) => [...prev, newItem]);
   };
@@ -382,7 +436,9 @@ export function EventProvider({
         p.id === id
           ? {
               ...p,
-              ...data
+              ...data,
+              token: data.token ?? p.token ?? generateToken(),
+              eventId: data.eventId ?? p.eventId ?? activeEventId ?? p.eventId
             }
           : p
       )
