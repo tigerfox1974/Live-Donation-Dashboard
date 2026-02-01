@@ -20,17 +20,63 @@ const getEventDonationsKey = (eventId: string) =>
 const getEventActiveItemKey = (eventId: string) =>
   buildEventStorageKey(eventId, 'active_item');
 
-const generateToken = () => {
-  const random = Math.random().toString(36).slice(2, 10);
-  return `t-${Date.now()}-${random}`;
+// Token'ların benzersizliğini takip etmek için Set
+const usedTokens = new Set<string>();
+
+const generateToken = (existingTokens?: Set<string>): string => {
+  const allUsed = existingTokens ? new Set([...usedTokens, ...existingTokens]) : usedTokens;
+  
+  // Crypto API varsa daha güvenli rastgele değer üret
+  let random: string;
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const array = new Uint8Array(6);
+    crypto.getRandomValues(array);
+    random = Array.from(array).map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 8).toUpperCase();
+  } else {
+    random = Math.random().toString(36).slice(2, 10).toUpperCase();
+  }
+  
+  const timestamp = Date.now().toString(36).toUpperCase();
+  let token = `T${timestamp.slice(-4)}-${random}`;
+  
+  // Benzersizlik kontrolü - çakışma varsa yeniden üret
+  let attempts = 0;
+  while (allUsed.has(token) && attempts < 100) {
+    const extra = Math.random().toString(36).slice(2, 5).toUpperCase();
+    token = `T${timestamp.slice(-4)}-${random}-${extra}`;
+    attempts++;
+  }
+  
+  usedTokens.add(token);
+  return token;
 };
 
-const ensureParticipantTokens = (list: Participant[], eventId: string) => {
-  return list.map((p) => ({
-    ...p,
-    token: p.token || generateToken(),
-    eventId: p.eventId || eventId
-  }));
+const ensureParticipantTokens = (list: Participant[], eventId: string): Participant[] => {
+  // Mevcut tokenları topla
+  const existingTokens = new Set<string>();
+  list.forEach(p => {
+    if (p.token) existingTokens.add(p.token);
+  });
+  
+  return list.map((p) => {
+    if (p.token) {
+      // Token zaten var, sadece eventId'yi güncelle
+      return {
+        ...p,
+        eventId: p.eventId || eventId
+      };
+    }
+    
+    // Yeni token oluştur (mevcut tokenlarla çakışmayacak şekilde)
+    const newToken = generateToken(existingTokens);
+    existingTokens.add(newToken);
+    
+    return {
+      ...p,
+      token: newToken,
+      eventId: p.eventId || eventId
+    };
+  });
 };
 
 const readStorageArray = <T,>(key: string): T[] | null => {
@@ -192,7 +238,14 @@ export function EventProvider({
       [];
 
     setItems(baseItems);
-    setParticipants(ensureParticipantTokens(baseParticipants, activeEventId));
+    
+    // Token'lı participant'ları oluştur ve usedTokens setini doldur
+    const hydratedParticipants = ensureParticipantTokens(baseParticipants, activeEventId);
+    // Mevcut tüm tokenları usedTokens setine ekle (benzersizlik garantisi için)
+    hydratedParticipants.forEach(p => {
+      if (p.token) usedTokens.add(p.token);
+    });
+    setParticipants(hydratedParticipants);
     setDonations(baseDonations);
 
     const storedActiveItemId = readStorageValue(
@@ -377,16 +430,8 @@ export function EventProvider({
       .sort((a, b) => b.timestamp - a.timestamp);
     if (sortedApproved.length > 0) {
       const lastId = sortedApproved[0].id;
-      setDonations((prev) =>
-        prev.map((d) =>
-          d.id === lastId
-            ? {
-                ...d,
-                status: 'pending'
-              }
-            : d
-        )
-      );
+      // Bağışı tamamen sil (pending yerine rejected veya silme)
+      setDonations((prev) => prev.filter((d) => d.id !== lastId));
     }
   };
 
@@ -460,17 +505,19 @@ export function EventProvider({
       if (index === -1) return prev;
       const swapIndex = direction === 'up' ? index - 1 : index + 1;
       if (swapIndex < 0 || swapIndex >= sorted.length) return prev;
-      const newOrder = [...sorted];
-      const tempOrder = newOrder[index].order;
-      newOrder[index] = {
-        ...newOrder[index],
-        order: newOrder[swapIndex].order
-      };
-      newOrder[swapIndex] = {
-        ...newOrder[swapIndex],
-        order: tempOrder
-      };
-      return newOrder;
+      
+      // Order değerlerini swap et ve yeni array döndür
+      const result = sorted.map((item, i) => {
+        if (i === index) {
+          return { ...item, order: sorted[swapIndex].order };
+        }
+        if (i === swapIndex) {
+          return { ...item, order: sorted[index].order };
+        }
+        return item;
+      });
+      
+      return result;
     });
   };
 

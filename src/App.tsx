@@ -14,6 +14,7 @@ import type { CreateEventInput, EventData, EventRecord, EventStatus } from './ty
 import { Monitor, Settings, Users, FlaskConical } from 'lucide-react';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from './lib/constants';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ToastProvider } from './components/ui/Toast';
 
 // Extended active event type with metadata
 export interface ActiveEventInfo {
@@ -1036,5 +1037,9 @@ function AppContent() {
 }
 
 export function App() {
-  return <AppContent />;
+  return (
+    <ToastProvider>
+      <AppContent />
+    </ToastProvider>
+  );
 }

@@ -106,29 +106,46 @@ export function DisplayScreen({ activeEvent }: DisplayScreenProps) {
     };
   }, []);
   // Handle target reached - trigger celebration and countdown
+  // Sadece hedef TAM OLARAK ilk kez ulaşıldığında celebration göster
+  const [hasReachedTarget, setHasReachedTarget] = useState(false);
+  
   useEffect(() => {
+    // Hedef henüz ulaşılmamışsa ve şimdi ulaşıldıysa
     if (
-    isTargetReached &&
-    currentTotal !== lastCelebratedTotal &&
-    !isTransitioning)
-    {
+      isTargetReached &&
+      !hasReachedTarget &&
+      !isTransitioning
+    ) {
       setShowCelebration(true);
-      setLastCelebratedTotal(currentTotal);
+      setHasReachedTarget(true);
+      
+      // Son item değilse otomatik geçiş başlat
       if (!isLastItem) {
         setIsTransitioning(true);
         setTransitionCountdown(AUTO_TRANSITION_DELAY / 1000);
       }
+      
+      // Celebration'u 5 saniye sonra kapat
       setTimeout(() => setShowCelebration(false), 5000);
     }
   }, [
-  currentTotal,
-  isTargetReached,
-  lastCelebratedTotal,
-  isTransitioning,
-  isLastItem]
-  );
-  // Countdown timer
+    currentTotal,
+    isTargetReached,
+    hasReachedTarget,
+    isTransitioning,
+    isLastItem
+  ]);
+  // Countdown timer - son item'da countdown çalışmasın
   useEffect(() => {
+    // Son item'daysa countdown yapma
+    if (isLastItem) {
+      if (isTransitioning) {
+        setIsTransitioning(false);
+        setTransitionCountdown(0);
+      }
+      return;
+    }
+    
     if (isTransitioning && transitionCountdown > 0) {
       countdownRef.current = setTimeout(() => {
         setTransitionCountdown(transitionCountdown - 1);
@@ -141,11 +158,12 @@ export function DisplayScreen({ activeEvent }: DisplayScreenProps) {
         clearTimeout(countdownRef.current);
       }
     };
-  }, [isTransitioning, transitionCountdown]);
+  }, [isTransitioning, transitionCountdown, isLastItem]);
   // Reset celebration state when item changes
   useEffect(() => {
     setLastCelebratedTotal(null);
     setShowCelebration(false);
+    setHasReachedTarget(false); // Yeni item için hedef durumunu sıfırla
   }, [activeItemId]);
   // Recent donations (last 5 approved)
   const recentDonations = [...donations].

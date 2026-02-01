@@ -4,6 +4,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { ProgressBar } from '../components/ProgressBar';
 import { cn } from '../lib/utils';
 import { useEvent } from '../contexts/EventContext';
+import { useToast } from '../components/ui/Toast';
+import { LoadingButton, LoadingSpinner } from '../components/ui/Loading';
+import {
+  validateForm,
+  eventFormValidation,
+  eventFieldLabels,
+  participantFormValidation,
+  participantFieldLabels,
+  itemFormValidation,
+  itemFieldLabels,
+  getFirstError
+} from '../lib/validation';
 import {
   Search,
   Plus,
@@ -338,6 +350,7 @@ export function EventsConsole({
   onImportEvents,
   onUpdateEventStats
 }: EventsConsoleProps) {
+  const toast = useToast();
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [showNewEventModal, setShowNewEventModal] = useState(false);
@@ -538,8 +551,10 @@ export function EventsConsole({
       
       // Initialize empty donations for new event
       localStorage.setItem(`polvak_event_${newEventId}_donations`, JSON.stringify([]));
+      toast.success('Etkinlik başarıyla klonlandı');
     } catch (err) {
       console.error('Clone data copy error:', err);
+      toast.error('Etkinlik klonlanırken bir hata oluştu');
     }
     
     setCloneSourceEventId(null);
@@ -962,6 +977,7 @@ export function EventsConsole({
         existingNames={events.map((event) => event.name)}
         onCreate={(input) => {
           onCreateEvent(input);
+          toast.success('Yeni etkinlik oluşturuldu');
           setShowNewEventModal(false);
         }} />
       }
@@ -987,6 +1003,7 @@ export function EventsConsole({
           [];
           if (ids.length > 0) {
             onDeleteEvents(ids);
+            toast.success(`${ids.length} etkinlik silindi`);
           }
           setSelectedRows(new Set());
           setShowDeleteModal(false);
@@ -1016,6 +1033,9 @@ export function EventsConsole({
         onConfirm={() => {
           const nextStatus = mapStatusChangeType(statusChangeType);
           onUpdateEventStatus(pendingStatusEventIds, nextStatus);
+          const statusText = statusChangeType === 'live' ? 'canlıya alındı' : 
+            statusChangeType === 'close' ? 'kapatıldı' : 'arşivlendi';
+          toast.success(`${pendingStatusEventIds.length} etkinlik ${statusText}`);
           setSelectedRows(new Set());
           setPendingStatusEventIds([]);
           setShowConfirmStatusModal(false);
@@ -1333,6 +1353,7 @@ function EventDetailView({
     copyTargets: boolean;
   }) => void;
 }) {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<
     'overview' | 'participants' | 'items' | 'transactions' | 'reports' | 'audit'>(
     'overview');
@@ -1623,6 +1644,9 @@ function EventDetailView({
         onClose={() => setShowConfirmStatusModal(false)}
         onConfirm={() => {
           onUpdateStatus(statusChangeType);
+          const statusText = statusChangeType === 'live' ? 'canlıya alındı' : 
+            statusChangeType === 'close' ? 'kapatıldı' : 'arşivlendi';
+          toast.success(`Etkinlik ${statusText}`);
           setShowConfirmStatusModal(false);
         }} />
 
@@ -1868,6 +1892,7 @@ function ParticipantsTab({
   eventId?: string;
   onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
 }) {
+  const toast = useToast();
   const { participants, donations, addParticipant, updateParticipant, deleteParticipant, getParticipantTotal } = useEvent();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -2098,6 +2123,7 @@ function ParticipantsTab({
             status: data.status as 'active' | 'inactive',
             eventId: eventId || ''
           });
+          toast.success('Katılımcı eklendi');
           setShowAddModal(false);
           if (eventId && onUpdateEventStats) {
             onUpdateEventStats(eventId, { participantCount: participants.length + 1 });
@@ -2121,6 +2147,7 @@ function ParticipantsTab({
             seat_label: data.seat_label,
             status: data.status as 'active' | 'inactive'
           });
+          toast.success('Katılımcı güncellendi');
           setShowEditModal(false);
           setSelectedParticipant(null);
         }} />
@@ -2142,6 +2169,7 @@ function ParticipantsTab({
               eventId: eventId || ''
             });
           });
+          toast.success(`${importedParticipants.length} katılımcı içe aktarıldı`);
           setShowImportModal(false);
           if (eventId && onUpdateEventStats) {
             onUpdateEventStats(eventId, { participantCount: participants.length + importedParticipants.length });
@@ -2179,6 +2207,7 @@ function ItemsTab({
   eventId?: string;
   onUpdateEventStats?: (eventId: string, patch: Partial<EventRecord>) => void;
 }) {
+  const toast = useToast();
   const { items, addItem, updateItem, deleteItem, reorderItems, getItemTotal } = useEvent();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -2411,6 +2440,7 @@ function ItemsTab({
             image_url: data.image_url || '',
             order: items.length + 1
           });
+          toast.success('Kalem eklendi');
           setShowAddModal(false);
           if (eventId && onUpdateEventStats) {
             onUpdateEventStats(eventId, { itemCount: items.length + 1 });
@@ -2431,6 +2461,7 @@ function ItemsTab({
             initial_target: data.initial_target,
             image_url: data.image_url || ''
           });
+          toast.success('Kalem güncellendi');
           setShowEditModal(false);
           setSelectedItem(null);
         }} />
@@ -2451,6 +2482,7 @@ function ItemsTab({
               order: items.length + index + 1
             });
           });
+          toast.success(`${importedItems.length} kalem içe aktarıldı`);
           setShowImportModal(false);
           if (eventId && onUpdateEventStats) {
             onUpdateEventStats(eventId, { itemCount: items.length + importedItems.length });
@@ -2466,6 +2498,7 @@ function ItemsTab({
         }}
         onConfirm={() => {
           deleteItem(selectedItem.id);
+          toast.success('Kalem silindi');
           setShowDeleteConfirmModal(false);
           setSelectedItem(null);
           if (eventId && onUpdateEventStats) {
@@ -3208,9 +3241,22 @@ function CloneEventModal({
     copyOrder: true,
     copyTargets: true
   });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [cloning, setCloning] = useState(false);
   
   const handleClone = () => {
-    if (!formData.name.trim() || !sourceEvent || !onClone) return;
+    // Validasyon
+    const errors = validateForm(
+      { name: formData.name, date: formData.date || new Date().toISOString().slice(0, 10) },
+      eventFormValidation
+    );
+    if (Object.keys(errors).length > 0) {
+      setFormError(getFirstError(errors, eventFieldLabels));
+      return;
+    }
+    if (!sourceEvent || !onClone) return;
+    
+    setCloning(true);
     onClone(
       {
         name: formData.name.trim(),
@@ -3316,13 +3362,25 @@ function CloneEventModal({
           </div>
         </div>
 
+        {formError && (
+          <div className="px-6 py-2 bg-red-50 border-t border-red-200 text-red-600 text-sm">
+            {formError}
+          </div>
+        )}
+
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={cloning}>
             İptal
           </Button>
-          <Button variant="primary" disabled={!formData.name.trim() || !sourceEvent} onClick={handleClone}>
+          <LoadingButton
+            variant="primary"
+            loading={cloning}
+            loadingText="Klonlanıyor..."
+            disabled={!sourceEvent}
+            onClick={handleClone}
+          >
             <Copy className="w-4 h-4 mr-2" /> Klonla
-          </Button>
+          </LoadingButton>
         </div>
       </div>
     </div>);
@@ -3383,8 +3441,19 @@ function ParticipantFormModal({
     status: 'active',
     ...initialData
   });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const handleSubmit = () => {
+    // Validasyon
+    const errors = validateForm(formData, participantFormValidation, participantFieldLabels);
+    if (errors.length > 0) {
+      setFormError(getFirstError(errors));
+      return;
+    }
+    setFormError(null);
+    setSaving(true);
+    
     if (onSave) {
       onSave(formData);
     } else {
@@ -3512,18 +3581,25 @@ function ParticipantFormModal({
               placeholder="Opsiyonel notlar..." />
 
           </div>
+          
+          {formError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {formError}
+            </div>
+          )}
         </div>
 
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
             İptal
           </Button>
-          <Button
-            variant="primary"
-            onClick={handleSubmit}
-            disabled={!formData.display_name}>
+          <LoadingButton
+            loading={saving}
+            loadingText="Kaydediliyor..."
+            onClick={handleSubmit}>
             {mode === 'add' ? 'Ekle' : 'Kaydet'}
-          </Button>
+          </LoadingButton>
         </div>
       </div>
     </div>);
@@ -3915,9 +3991,18 @@ function ItemFormModal({
     notes: '',
     ...initialData
   });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   
   const handleSubmit = () => {
-    if (!formData.name || formData.initial_target <= 0) return;
+    // Validasyon
+    const errors = validateForm(formData, itemFormValidation, itemFieldLabels);
+    if (errors.length > 0) {
+      setFormError(getFirstError(errors));
+      return;
+    }
+    setFormError(null);
+    setSaving(true);
     if (onSave) {
       onSave(formData);
     }
@@ -4036,18 +4121,25 @@ function ItemFormModal({
               placeholder="Opsiyonel notlar..." />
 
           </div>
+          
+          {formError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {formError}
+            </div>
+          )}
         </div>
 
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
             İptal
           </Button>
-          <Button
-            variant="primary"
-            onClick={handleSubmit}
-            disabled={!formData.name || formData.initial_target <= 0}>
+          <LoadingButton
+            loading={saving}
+            loadingText="Kaydediliyor..."
+            onClick={handleSubmit}>
             {mode === 'add' ? 'Ekle' : 'Kaydet'}
-          </Button>
+          </LoadingButton>
         </div>
       </div>
     </div>);
@@ -4624,15 +4716,18 @@ function ParticipantQRModal({
   participant: any;
   onClose: () => void;
 }) {
-  const baseUrl = window.location.origin + window.location.pathname;
-  const token = participant.token || `${participant.id.slice(-6)}-${Math.random().toString(36).slice(2,6)}`.toUpperCase();
-  const qrUrl = `${baseUrl}#/p/${token}`;
+  // Token kontrolü - token yoksa modal açılmamalı, dışarıda ensure edilmeli
+  const token = participant.token;
+  const qrUrl = token ? window.location.origin + '#/p/' + token : '';
   
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(qrUrl);
+    if (qrUrl) {
+      navigator.clipboard.writeText(qrUrl);
+    }
   };
   
   const handleDownloadQR = () => {
+    if (!token) return;
     // Create simple QR representation for download
     const content = `Katılımcı: ${participant.display_name}\nToken: ${token}\nURL: ${qrUrl}`;
     const blob = new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8' });
@@ -4656,16 +4751,29 @@ function ParticipantQRModal({
         
         <div className="p-6 space-y-4">
           <div className="text-center">
-            <div className="w-48 h-48 bg-gray-100 rounded-xl flex items-center justify-center mx-auto mb-4 border-2 border-dashed border-gray-300">
-              <div className="text-center">
-                <QrCode className="w-16 h-16 text-gray-400 mx-auto mb-2" />
-                <p className="text-xs text-gray-500 font-mono">{token}</p>
+            {token ? (
+              <>
+                <div className="w-48 h-48 bg-gray-100 rounded-xl flex items-center justify-center mx-auto mb-4 border-2 border-dashed border-gray-300">
+                  <div className="text-center">
+                    <QrCode className="w-16 h-16 text-gray-400 mx-auto mb-2" />
+                    <p className="text-xs text-gray-500 font-mono">{token}</p>
+                  </div>
+                </div>
+                <h4 className="font-bold text-gray-900">{participant.display_name}</h4>
+                <p className="text-sm text-gray-500">{participant.type === 'ORG' ? 'Kuruluş' : 'Kişi'}</p>
+              </>
+            ) : (
+              <div className="py-8">
+                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <AlertCircle className="w-8 h-8 text-red-600" />
+                </div>
+                <h4 className="font-bold text-gray-900 mb-2">Token Bulunamadı</h4>
+                <p className="text-sm text-gray-500">Bu katılımcı için henüz token oluşturulmamış. Lütfen katılımcıyı güncelleyin.</p>
               </div>
-            </div>
-            <h4 className="font-bold text-gray-900">{participant.display_name}</h4>
-            <p className="text-sm text-gray-500">{participant.type === 'ORG' ? 'Kuruluş' : 'Kişi'}</p>
+            )}
           </div>
           
+          {token && (
           <div className="bg-gray-50 rounded-lg p-3">
             <label className="text-xs text-gray-500 mb-1 block">Bağış Linki</label>
             <div className="flex gap-2">
@@ -4680,13 +4788,14 @@ function ParticipantQRModal({
               </Button>
             </div>
           </div>
+          )}
         </div>
         
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
           <Button variant="outline" onClick={onClose}>
             Kapat
           </Button>
-          <Button variant="primary" onClick={handleDownloadQR}>
+          <Button variant="primary" onClick={handleDownloadQR} disabled={!token}>
             <Download className="w-4 h-4 mr-2" /> İndir
           </Button>
         </div>

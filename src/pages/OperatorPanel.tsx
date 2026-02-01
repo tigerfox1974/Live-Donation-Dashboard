@@ -4,6 +4,15 @@ import { useEvent } from '../contexts/EventContext';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { ProgressBar } from '../components/ProgressBar';
+import { useToast } from '../components/ui/Toast';
+import {
+  validateForm,
+  participantFormValidation,
+  participantFieldLabels,
+  itemFormValidation,
+  itemFieldLabels,
+  getFirstError
+} from '../lib/validation';
 import {
   LayoutDashboard,
   ListChecks,
@@ -939,8 +948,26 @@ function ParticipantsTab({
       return matchesSearch && matchesType && matchesStatus;
     });
   }, [participants, search, filterType, filterStatus]);
+  
+  // Toast hook (component içinde kullanılabilir olması için bu seviyede tanımlanamaz,
+  // bu yüzden basit validasyon ile devam ediyoruz)
+  const [formError, setFormError] = useState<string | null>(null);
+  
   const handleSubmit = () => {
-    if (!formData.display_name) return;
+    // Validasyon
+    const errors = validateForm(
+      formData,
+      participantFormValidation,
+      participantFieldLabels
+    );
+    
+    if (errors.length > 0) {
+      setFormError(getFirstError(errors));
+      return;
+    }
+    
+    setFormError(null);
+    
     if (editingId) {
       updateParticipant(editingId, formData);
     } else {
@@ -951,6 +978,7 @@ function ParticipantsTab({
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
+    setFormError(null);
     setFormData({
       type: 'PERSON',
       display_name: '',
@@ -967,14 +995,31 @@ function ParticipantsTab({
     setShowForm(true);
   };
   const handleGenerateQR = (participant: Participant) => {
-    updateParticipant(participant.id, {
-      qr_generated: true
-    });
-    setQrParticipant({
-      ...participant,
-      qr_generated: true
-    });
-    setShowQRModal(true);
+    // Token yoksa context'in updateParticipant'i otomatik olarak token üretecek
+    // Sadece qr_generated flag'ini set et, token üretimi ensureParticipantTokens'a bırakılıyor
+    if (!participant.token) {
+      // Token yoksa, önce bir güncelleme yapıp context'in token üretmesini sağla
+      // Not: Bu işlem için updateParticipant'tan sonra state'in güncellenmesini beklememiz gerekiyor
+      updateParticipant(participant.id, { qr_generated: true });
+      
+      // Participant'ların güncellenmesini bekle ve modal'ı aç
+      // participants state'i güncellenince token eklenmiş olacak
+      setTimeout(() => {
+        const updatedParticipant = participants.find((p: Participant) => p.id === participant.id);
+        if (updatedParticipant) {
+          setQrParticipant(updatedParticipant);
+          setShowQRModal(true);
+        }
+      }, 50);
+    } else {
+      // Token zaten var, sadece qr_generated'i güncelle
+      updateParticipant(participant.id, { qr_generated: true });
+      setQrParticipant({
+        ...participant,
+        qr_generated: true
+      });
+      setShowQRModal(true);
+    }
   };
   const handleDownloadLabels = () => {
     alert("Etiket PDF'i indiriliyor...");
@@ -1158,14 +1203,22 @@ function ParticipantsTab({
 
             </div>
           </div>
+          
+          {/* Validasyon Hatası */}
+          {formError && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {formError}
+            </div>
+          )}
+          
           <div className="flex justify-end gap-3 mt-6">
             <Button variant="outline" onClick={resetForm}>
               İptal
             </Button>
             <Button
             variant="primary"
-            onClick={handleSubmit}
-            disabled={!formData.display_name}>
+            onClick={handleSubmit}>
 
               Kaydet
             </Button>
@@ -1331,7 +1384,9 @@ function ParticipantsTab({
       {showBulkQRModal &&
       <BulkQRModal
         onClose={() => setShowBulkQRModal(false)}
-        count={participants.length} />
+        count={participants.length}
+        participants={participants}
+        onUpdateParticipant={updateParticipant} />
 
       }
       {showQRModal && qrParticipant &&
@@ -1385,8 +1440,24 @@ function ItemsTab({
       grandTotal
     };
   }, [items, getGrandTarget, getGrandTotal]);
+  
+  const [itemFormError, setItemFormError] = useState<string | null>(null);
+  
   const handleSubmit = () => {
-    if (!formData.name) return;
+    // Validasyon
+    const errors = validateForm(
+      formData,
+      itemFormValidation,
+      itemFieldLabels
+    );
+    
+    if (errors.length > 0) {
+      setItemFormError(getFirstError(errors));
+      return;
+    }
+    
+    setItemFormError(null);
+    
     if (editingId) {
       updateItem(editingId, formData);
     } else {
@@ -1400,6 +1471,7 @@ function ItemsTab({
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
+    setItemFormError(null);
     setFormData({
       name: '',
       initial_target: 10,
@@ -1576,14 +1648,22 @@ function ItemsTab({
 
             </div>
           </div>
+          
+          {/* Validasyon Hatası */}
+          {itemFormError && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              {itemFormError}
+            </div>
+          )}
+          
           <div className="flex justify-end gap-3 mt-6">
             <Button variant="outline" onClick={resetForm}>
               İptal
             </Button>
             <Button
             variant="primary"
-            onClick={handleSubmit}
-            disabled={!formData.name}>
+            onClick={handleSubmit}>
 
               Kaydet
             </Button>
@@ -2014,13 +2094,137 @@ function ReportsTab({
 }
 function BulkQRModal({
   onClose,
-  count
-
-
-
-}: {onClose: () => void;count: number;}) {
+  count,
+  participants,
+  onUpdateParticipant
+}: {
+  onClose: () => void;
+  count: number;
+  participants?: Participant[];
+  onUpdateParticipant?: (id: string, data: Partial<Participant>) => void;
+}) {
   const [format, setFormat] = useState('pdf');
   const [size, setSize] = useState('60x40');
+  const [generating, setGenerating] = useState(false);
+
+  const generateTokenForParticipant = (): string => {
+    let random: string;
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      const array = new Uint8Array(6);
+      crypto.getRandomValues(array);
+      random = Array.from(array).map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 8).toUpperCase();
+    } else {
+      random = Math.random().toString(36).slice(2, 10).toUpperCase();
+    }
+    const timestamp = Date.now().toString(36).toUpperCase();
+    return `T${timestamp.slice(-4)}-${random}`;
+  };
+
+  const handleGenerate = async () => {
+    if (!participants || participants.length === 0) return;
+    setGenerating(true);
+    
+    try {
+      const qrDataList: { name: string; token: string; tableNo: string; qrUrl: string }[] = [];
+      
+      // Her participant için token oluştur ve güncelle
+      for (const p of participants) {
+        let token = p.token;
+        if (!token) {
+          token = generateTokenForParticipant();
+          // Participant'ı güncelle
+          if (onUpdateParticipant) {
+            onUpdateParticipant(p.id, { token, qr_generated: true });
+          }
+        } else if (!p.qr_generated && onUpdateParticipant) {
+          onUpdateParticipant(p.id, { qr_generated: true });
+        }
+        
+        // Doğru URL formatı: window.location.origin + '#/p/' + token
+        const qrUrl = window.location.origin + '#/p/' + token;
+        qrDataList.push({
+          name: p.display_name,
+          token,
+          tableNo: p.table_no || '-',
+          qrUrl
+        });
+      }
+      
+      if (format === 'pdf') {
+        // Yazdırmaya hazır HTML sayfası oluştur
+        const qrSize = size === '60x40' ? 100 : 140;
+        const printContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>QR Kodları - ${count} Katılımcı</title>
+  <script src="https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js"><\/script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .card { border: 1px solid #ccc; padding: 15px; text-align: center; page-break-inside: avoid; border-radius: 8px; }
+    .qr-container { width: ${qrSize}px; height: ${qrSize}px; margin: 0 auto 10px; }
+    .name { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+    .table { font-size: 12px; color: #666; margin-bottom: 4px; }
+    .token { font-size: 10px; color: #999; font-family: monospace; }
+    @media print { 
+      .grid { grid-template-columns: repeat(3, 1fr); } 
+      body { padding: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    ${qrDataList.map((q, i) => `
+      <div class="card">
+        <div class="qr-container" id="qr-${i}"></div>
+        <div class="name">${q.name}</div>
+        <div class="table">Masa: ${q.tableNo}</div>
+        <div class="token">${q.token}</div>
+      </div>
+    `).join('')}
+  </div>
+  <script>
+    const qrData = ${JSON.stringify(qrDataList)};
+    qrData.forEach((q, i) => {
+      QRCode.toCanvas(document.createElement('canvas'), q.qrUrl, { width: ${qrSize} }, (err, canvas) => {
+        if (!err) {
+          document.getElementById('qr-' + i).appendChild(canvas);
+        }
+      });
+    });
+    setTimeout(() => window.print(), 1000);
+  <\/script>
+</body>
+</html>`;
+        
+        const blob = new Blob([printContent], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank');
+        if (win) {
+          win.onload = () => URL.revokeObjectURL(url);
+        }
+      } else {
+        // TSV dosyası olarak indir
+        const header = 'İsim\tMasa\tToken\tURL';
+        const rows = qrDataList.map(q => `${q.name}\t${q.tableNo}\t${q.token}\t${q.qrUrl}`);
+        const content = [header, ...rows].join('\n');
+        const blob = new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `qr-kodlari-${Date.now()}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+      
+      onClose();
+    } catch (err) {
+      console.error('QR generation error:', err);
+    } finally {
+      setGenerating(false);
+    }
+  };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -2110,11 +2314,15 @@ function BulkQRModal({
         </div>
 
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={generating}>
             İptal
           </Button>
-          <Button variant="primary" onClick={onClose}>
-            <Printer className="w-4 h-4 mr-2" /> Üret ve İndir
+          <Button variant="primary" onClick={handleGenerate} disabled={generating}>
+            {generating ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Üretiliyor...</>
+            ) : (
+              <><Printer className="w-4 h-4 mr-2" /> Üret ve İndir</>
+            )}
           </Button>
         </div>
       </div>
