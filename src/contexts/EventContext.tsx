@@ -90,10 +90,65 @@ export function EventProvider({
   const [isHydrating, setIsHydrating] = useState(true);
   const canAcceptDonations = !isTransitioning;
   const eventDataMapRef = useRef(eventDataMap);
+  const prevEventIdRef = useRef<string | null>(null);
+  const itemsRef = useRef<DonationItem[]>([]);
+  const participantsRef = useRef<Participant[]>([]);
+  const donationsRef = useRef<Donation[]>([]);
 
+  // Keep refs updated
   useEffect(() => {
     eventDataMapRef.current = eventDataMap;
   }, [eventDataMap]);
+  
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+  
+  useEffect(() => {
+    participantsRef.current = participants;
+  }, [participants]);
+  
+  useEffect(() => {
+    donationsRef.current = donations;
+  }, [donations]);
+
+  // Save previous event data before switching to new event
+  useEffect(() => {
+    const prevEventId = prevEventIdRef.current;
+    
+    // If we're switching from one event to another, save the previous event's data
+    if (prevEventId && prevEventId !== activeEventId) {
+      const prevItems = itemsRef.current;
+      const prevParticipants = participantsRef.current;
+      const prevDonations = donationsRef.current;
+      
+      // Save to localStorage
+      if (prevItems.length > 0 || prevParticipants.length > 0 || prevDonations.length > 0) {
+        try {
+          localStorage.setItem(getEventItemsKey(prevEventId), JSON.stringify(prevItems));
+          localStorage.setItem(getEventParticipantsKey(prevEventId), JSON.stringify(prevParticipants));
+          localStorage.setItem(getEventDonationsKey(prevEventId), JSON.stringify(prevDonations));
+        } catch {
+          // no-op
+        }
+      }
+      
+      // Save to eventDataMap
+      onEventDataMapChange((prev) => {
+        const next = new Map(prev);
+        next.set(prevEventId, {
+          eventId: prevEventId,
+          items: prevItems,
+          participants: prevParticipants,
+          donations: prevDonations
+        });
+        return next;
+      });
+    }
+    
+    // Update the ref to current event
+    prevEventIdRef.current = activeEventId;
+  }, [activeEventId, onEventDataMapChange]);
 
   useEffect(() => {
     setIsHydrating(true);

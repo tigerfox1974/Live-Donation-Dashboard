@@ -342,6 +342,7 @@ export function EventsConsole({
   const [showFilters, setShowFilters] = useState(false);
   const [showNewEventModal, setShowNewEventModal] = useState(false);
   const [showCloneModal, setShowCloneModal] = useState(false);
+  const [cloneSourceEventId, setCloneSourceEventId] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -479,6 +480,71 @@ export function EventsConsole({
     if (type === 'close') return 'closed';
     return 'archived';
   };
+  
+  const handleCloneEvent = (
+    input: CreateEventInput,
+    sourceEventId: string,
+    options: {
+      copyParticipants: boolean;
+      copyItems: boolean;
+      copyOrder: boolean;
+      copyTargets: boolean;
+    }
+  ) => {
+    // Generate the new event ID first so we can use it consistently
+    const newEventId = `evt-${Date.now()}`;
+    
+    // Create the new event with the pre-generated ID
+    onCreateEvent({
+      ...input,
+      id: newEventId
+    });
+    
+    // Then copy data from source event if options are selected
+    try {
+      if (options.copyItems) {
+        const itemsKey = `polvak_event_${sourceEventId}_items`;
+        const itemsRaw = localStorage.getItem(itemsKey);
+        if (itemsRaw) {
+          const items = JSON.parse(itemsRaw);
+          const newItems = items.map((item: any, index: number) => ({
+            ...item,
+            id: `item-${Date.now()}-${index}`,
+            eventId: newEventId,
+            current: 0, // Reset current count
+            initial_target: options.copyTargets ? item.initial_target : 0,
+            order: options.copyOrder ? item.order : index + 1
+          }));
+          localStorage.setItem(`polvak_event_${newEventId}_items`, JSON.stringify(newItems));
+        }
+      }
+      
+      if (options.copyParticipants) {
+        const participantsKey = `polvak_event_${sourceEventId}_participants`;
+        const participantsRaw = localStorage.getItem(participantsKey);
+        if (participantsRaw) {
+          const participants = JSON.parse(participantsRaw);
+          const newParticipants = participants.map((p: any, index: number) => ({
+            ...p,
+            id: `p-${Date.now()}-${index}`,
+            eventId: newEventId,
+            token: undefined, // Reset token
+            qr_generated: false,
+            total_donations: 0
+          }));
+          localStorage.setItem(`polvak_event_${newEventId}_participants`, JSON.stringify(newParticipants));
+        }
+      }
+      
+      // Initialize empty donations for new event
+      localStorage.setItem(`polvak_event_${newEventId}_donations`, JSON.stringify([]));
+    } catch (err) {
+      console.error('Clone data copy error:', err);
+    }
+    
+    setCloneSourceEventId(null);
+  };
+  
   const handleSwitchToOperator = (event: EventRecord) => {
     if (onSwitchToOperator) {
       onSwitchToOperator({
@@ -529,7 +595,8 @@ export function EventsConsole({
           );
         }}
         onUpdateEventStats={onUpdateEventStats}
-        isActiveEvent={activeEventId === selectedEvent.id} />);
+        isActiveEvent={activeEventId === selectedEvent.id}
+        onCloneEvent={handleCloneEvent} />);
 
 
   }
@@ -857,7 +924,10 @@ export function EventsConsole({
                       <RowActionsMenu
                       event={event}
                       onView={() => setSelectedEventId(event.id)}
-                      onClone={() => setShowCloneModal(true)}
+                      onClone={() => {
+                        setCloneSourceEventId(event.id);
+                        setShowCloneModal(true);
+                      }}
                       onDelete={() => handleDeleteClick(event.id)}
                       onSwitchToOperator={() => handleSwitchToOperator(event)}
                       onSwitchToProjection={() =>
@@ -896,8 +966,14 @@ export function EventsConsole({
         }} />
       }
 
-      {showCloneModal &&
-      <CloneEventModal onClose={() => setShowCloneModal(false)} />
+      {showCloneModal && cloneSourceEventId &&
+      <CloneEventModal 
+        onClose={() => {
+          setShowCloneModal(false);
+          setCloneSourceEventId(null);
+        }}
+        sourceEvent={events.find(e => e.id === cloneSourceEventId)}
+        onClone={handleCloneEvent} />
       }
 
       {showDeleteModal &&
@@ -1238,16 +1314,25 @@ function EventDetailView({
   onSwitchToFinal,
   onUpdateStatus,
   onUpdateEventStats,
-  isActiveEvent
-
-
-
-
-
-
-
-
-}: {event: EventRecord;onBack: () => void;auditLog: AuditLogEntry[];onSwitchToOperator?: () => void;onSwitchToProjection?: () => void;onSwitchToFinal?: () => void;onUpdateStatus: (type: 'live' | 'close' | 'archive') => void;onUpdateEventStats: (eventId: string, patch: Partial<EventRecord>) => void;isActiveEvent?: boolean;}) {
+  isActiveEvent,
+  onCloneEvent
+}: {
+  event: EventRecord;
+  onBack: () => void;
+  auditLog: AuditLogEntry[];
+  onSwitchToOperator?: () => void;
+  onSwitchToProjection?: () => void;
+  onSwitchToFinal?: () => void;
+  onUpdateStatus: (type: 'live' | 'close' | 'archive') => void;
+  onUpdateEventStats: (eventId: string, patch: Partial<EventRecord>) => void;
+  isActiveEvent?: boolean;
+  onCloneEvent?: (input: CreateEventInput, sourceEventId: string, options: {
+    copyParticipants: boolean;
+    copyItems: boolean;
+    copyOrder: boolean;
+    copyTargets: boolean;
+  }) => void;
+}) {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'participants' | 'items' | 'transactions' | 'reports' | 'audit'>(
     'overview');
@@ -1556,7 +1641,10 @@ function EventDetailView({
 
       }
       {showCloneModal &&
-      <CloneEventModal onClose={() => setShowCloneModal(false)} />
+      <CloneEventModal 
+        onClose={() => setShowCloneModal(false)}
+        sourceEvent={event}
+        onClone={onCloneEvent} />
       }
     </div>);
 
@@ -3098,15 +3186,49 @@ function NewEventModal({
     </div>);
 
 }
-function CloneEventModal({ onClose }: {onClose: () => void;}) {
+function CloneEventModal({ 
+  onClose,
+  sourceEvent,
+  onClone
+}: {
+  onClose: () => void;
+  sourceEvent?: EventRecord;
+  onClone?: (input: CreateEventInput, sourceEventId: string, options: {
+    copyParticipants: boolean;
+    copyItems: boolean;
+    copyOrder: boolean;
+    copyTargets: boolean;
+  }) => void;
+}) {
   const [formData, setFormData] = useState({
-    name: '',
+    name: sourceEvent ? `${sourceEvent.name} (Kopya)` : '',
     date: '',
     copyParticipants: true,
     copyItems: true,
     copyOrder: true,
     copyTargets: true
   });
+  
+  const handleClone = () => {
+    if (!formData.name.trim() || !sourceEvent || !onClone) return;
+    onClone(
+      {
+        name: formData.name.trim(),
+        date: formData.date || new Date().toISOString().slice(0, 10),
+        venue: sourceEvent.venue,
+        description: sourceEvent.description,
+        template: 'empty'
+      },
+      sourceEvent.id,
+      {
+        copyParticipants: formData.copyParticipants,
+        copyItems: formData.copyItems,
+        copyOrder: formData.copyOrder,
+        copyTargets: formData.copyTargets
+      }
+    );
+    onClose();
+  };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -3198,7 +3320,7 @@ function CloneEventModal({ onClose }: {onClose: () => void;}) {
           <Button variant="outline" onClick={onClose}>
             İptal
           </Button>
-          <Button variant="primary" disabled={!formData.name}>
+          <Button variant="primary" disabled={!formData.name.trim() || !sourceEvent} onClick={handleClone}>
             <Copy className="w-4 h-4 mr-2" /> Klonla
           </Button>
         </div>

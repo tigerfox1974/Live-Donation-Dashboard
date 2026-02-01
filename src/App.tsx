@@ -373,6 +373,21 @@ function AppRoutes({
       }
 
       if (participantByToken) {
+        // If we switched to a different event, wait for context to rehydrate
+        // Check if the matched event is different from current active event
+        const needsRehydration = matchedEvent && activeEvent && matchedEvent.id !== activeEvent.id;
+        
+        if (needsRehydration || isHydrating) {
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl p-8 text-center max-w-md">
+                <div className="w-12 h-12 border-4 border-[#1e3a5f] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-sm text-gray-600">Bağış ekranı hazırlanıyor...</p>
+              </div>
+            </div>
+          );
+        }
+        
         return (
           <DonorScreen
             participantId={participantByToken.id}
@@ -586,6 +601,73 @@ function AppContent() {
     () => activeEvent?.id || null
   );
 
+  // Initialize eventDataMap from localStorage for all events
+  useEffect(() => {
+    const loadEventDataFromStorage = () => {
+      const newMap = new Map<string, EventData>();
+      
+      for (const event of events) {
+        try {
+          const itemsKey = `polvak_event_${event.id}_items`;
+          const participantsKey = `polvak_event_${event.id}_participants`;
+          const donationsKey = `polvak_event_${event.id}_donations`;
+          
+          const itemsRaw = localStorage.getItem(itemsKey);
+          const participantsRaw = localStorage.getItem(participantsKey);
+          const donationsRaw = localStorage.getItem(donationsKey);
+          
+          const items = itemsRaw ? JSON.parse(itemsRaw) : [];
+          const participants = participantsRaw ? JSON.parse(participantsRaw) : [];
+          const donations = donationsRaw ? JSON.parse(donationsRaw) : [];
+          
+          // Only add to map if there's actual data
+          if (items.length > 0 || participants.length > 0 || donations.length > 0) {
+            newMap.set(event.id, {
+              eventId: event.id,
+              items: Array.isArray(items) ? items : [],
+              participants: Array.isArray(participants) ? participants : [],
+              donations: Array.isArray(donations) ? donations : []
+            });
+          }
+        } catch {
+          // Ignore parse errors for individual events
+        }
+      }
+      
+      if (newMap.size > 0) {
+        setEventDataMap((prev) => {
+          const merged = new Map(prev);
+          for (const [key, value] of newMap) {
+            const existing = merged.get(key);
+            
+            if (!existing) {
+              // No existing entry, use the new value
+              merged.set(key, value);
+            } else {
+              // Merge each data type separately - use localStorage data if it has more entries
+              const mergedEntry = {
+                eventId: key,
+                items: (value.items.length > 0 && (existing.items.length === 0 || value.items.length >= existing.items.length))
+                  ? value.items
+                  : existing.items,
+                participants: (value.participants.length > 0 && (existing.participants.length === 0 || value.participants.length >= existing.participants.length))
+                  ? value.participants
+                  : existing.participants,
+                donations: (value.donations.length > 0 && (existing.donations.length === 0 || value.donations.length >= existing.donations.length))
+                  ? value.donations
+                  : existing.donations
+              };
+              merged.set(key, mergedEntry);
+            }
+          }
+          return merged;
+        });
+      }
+    };
+    
+    loadEventDataFromStorage();
+  }, [events]);
+
   useEffect(() => {
     const handleHashChange = () => setHash(window.location.hash);
     window.addEventListener('hashchange', handleHashChange);
@@ -598,10 +680,48 @@ function AppContent() {
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== EVENTS_STORAGE_KEY) return;
-      const next = getStoredEvents();
-      if (next && next.length > 0) {
-        setEvents(next);
+      if (!event.key) return;
+      
+      // Handle events list sync
+      if (event.key === EVENTS_STORAGE_KEY) {
+        const next = getStoredEvents();
+        if (next && next.length > 0) {
+          setEvents(next);
+        }
+        return;
+      }
+      
+      // Handle event-specific data sync (items, participants, donations)
+      const eventDataKeyPattern = /^polvak_event_([^_]+)_(items|participants|donations)$/;
+      const match = event.key.match(eventDataKeyPattern);
+      if (match) {
+        const eventId = match[1];
+        const dataType = match[2] as 'items' | 'participants' | 'donations';
+        
+        try {
+          const raw = event.newValue;
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              setEventDataMap((prev) => {
+                const next = new Map(prev);
+                const existing = next.get(eventId) || {
+                  eventId,
+                  items: [],
+                  participants: [],
+                  donations: []
+                };
+                next.set(eventId, {
+                  ...existing,
+                  [dataType]: parsed
+                });
+                return next;
+              });
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
       }
     };
     window.addEventListener('storage', handleStorage);
@@ -710,8 +830,9 @@ function AppContent() {
   const handleCreateEvent = (input: CreateEventInput) => {
     const now = Date.now();
     const safeDate = input.date || new Date().toISOString().slice(0, 10);
+    const eventId = input.id || `evt-${now}`;
     const newEvent: EventRecord = {
-      id: `evt-${now}`,
+      id: eventId,
       name: input.name.trim(),
       date: safeDate,
       startTime: input.startTime || '19:00',

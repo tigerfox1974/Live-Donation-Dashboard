@@ -48,6 +48,7 @@ export interface EventRecord {
 }
 
 export interface CreateEventInput {
+  id?: string; // Optional: if provided, use this ID instead of generating one
   name: string;
   date: string;
   startTime: string;
