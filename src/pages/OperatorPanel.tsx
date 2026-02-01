@@ -154,6 +154,8 @@ export function OperatorPanel({
     'live');
   const [showEventSelector, setShowEventSelector] = useState(false);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  const [openParticipantForm, setOpenParticipantForm] = useState(false);
+  const [openItemForm, setOpenItemForm] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [keyAction, setKeyAction] = useState<{
     message: string;
@@ -250,6 +252,24 @@ export function OperatorPanel({
         return;
       }
       
+      // Ctrl+N - Go to Participants tab and open form (works even in input)
+      if (event.key.toLowerCase() === 'n' && event.ctrlKey) {
+        event.preventDefault();
+        setActiveTab('participants');
+        setOpenParticipantForm(true);
+        notifyKeyAction('Yeni katılımcı formu açıldı.', 'info');
+        return;
+      }
+      
+      // Ctrl+I - Go to Items tab and open form (works even in input)
+      if (event.key.toLowerCase() === 'i' && event.ctrlKey) {
+        event.preventDefault();
+        setActiveTab('items');
+        setOpenItemForm(true);
+        notifyKeyAction('Yeni kalem formu açıldı.', 'info');
+        return;
+      }
+      
       // Escape - Close any open modal
       if (event.key === 'Escape') {
         if (showKeyboardHelp) {
@@ -339,22 +359,6 @@ export function OperatorPanel({
         event.preventDefault();
         handleNextItem();
         notifyKeyAction('Sonraki kaleme geçildi.', 'info');
-        return;
-      }
-      
-      // Ctrl+N - Go to Participants tab (add new participant)
-      if (event.key.toLowerCase() === 'n' && event.ctrlKey) {
-        event.preventDefault();
-        setActiveTab('participants');
-        notifyKeyAction('Katılımcılar sekmesine geçildi. Form için butona tıklayın.', 'info');
-        return;
-      }
-      
-      // Ctrl+I - Go to Items tab (add new item)
-      if (event.key.toLowerCase() === 'i' && event.ctrlKey) {
-        event.preventDefault();
-        setActiveTab('items');
-        notifyKeyAction('Kalemler sekmesine geçildi. Form için butona tıklayın.', 'info');
         return;
       }
       
@@ -618,7 +622,9 @@ export function OperatorPanel({
               participants={participants}
               addParticipant={addParticipant}
               updateParticipant={updateParticipant}
-              getParticipantTotal={getParticipantTotal} />
+              getParticipantTotal={getParticipantTotal}
+              openFormOnMount={openParticipantForm}
+              onFormOpened={() => setOpenParticipantForm(false)} />
 
             }
 
@@ -633,7 +639,9 @@ export function OperatorPanel({
               reorderItems={reorderItems}
               getItemTotal={getItemTotal}
               getGrandTotal={getGrandTotal}
-              getGrandTarget={getGrandTarget} />
+              getGrandTarget={getGrandTarget}
+              openFormOnMount={openItemForm}
+              onFormOpened={() => setOpenItemForm(false)} />
 
             }
 
@@ -702,8 +710,8 @@ function KeyboardShortcutsModal({ isOpen, onClose }: { isOpen: boolean; onClose:
       { key: '?', desc: 'Bu yardımı aç/kapat' }
     ]},
     { category: 'Hızlı Erişim', items: [
-      { key: 'Ctrl+N', desc: 'Katılımcılar sekmesine git' },
-      { key: 'Ctrl+I', desc: 'Kalemler sekmesine git' }
+      { key: 'Ctrl+N', desc: 'Yeni katılımcı formu aç' },
+      { key: 'Ctrl+I', desc: 'Yeni kalem formu aç' }
     ]},
     { category: 'Bağış İşlemleri', items: [
       { key: 'Space', desc: 'Bekleyen bağışı onayla' },
@@ -1109,7 +1117,9 @@ function ParticipantsTab({
   participants,
   addParticipant,
   updateParticipant,
-  getParticipantTotal
+  getParticipantTotal,
+  openFormOnMount,
+  onFormOpened
 }: any) {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'ORG' | 'PERSON'>('all');
@@ -1132,6 +1142,15 @@ function ParticipantsTab({
   const [showBulkQRModal, setShowBulkQRModal] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrParticipant, setQrParticipant] = useState<Participant | null>(null);
+  
+  // Open form when triggered from parent via Ctrl+N
+  useEffect(() => {
+    if (openFormOnMount) {
+      setShowForm(true);
+      onFormOpened?.();
+    }
+  }, [openFormOnMount, onFormOpened]);
+  
   const stats = useMemo(() => {
     const total = participants.length;
     const active = participants.filter(
@@ -1645,7 +1664,9 @@ function ItemsTab({
   reorderItems,
   getItemTotal,
   getGrandTotal,
-  getGrandTarget
+  getGrandTarget,
+  openFormOnMount,
+  onFormOpened
 }: any) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1661,6 +1682,14 @@ function ItemsTab({
   // Refs for keyboard navigation
   const firstInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  // Open form when triggered from parent via Ctrl+I
+  useEffect(() => {
+    if (openFormOnMount) {
+      setShowForm(true);
+      onFormOpened?.();
+    }
+  }, [openFormOnMount, onFormOpened]);
   
   const sortedItems = useMemo(() => {
     return [...items].sort((a, b) => a.order - b.order);
@@ -2366,6 +2395,23 @@ function BulkQRModal({
   const [format, setFormat] = useState('pdf');
   const [size, setSize] = useState('60x40');
   const [generating, setGenerating] = useState(false);
+  const firstFocusRef = useRef<HTMLButtonElement>(null);
+  
+  // Focus first element and handle Escape
+  useEffect(() => {
+    if (firstFocusRef.current) {
+      firstFocusRef.current.focus();
+    }
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const generateTokenForParticipant = (): string => {
     let random: string;
@@ -2490,7 +2536,7 @@ function BulkQRModal({
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
           <h3 className="font-bold text-lg">Toplu QR Üret</h3>
-          <button onClick={onClose} className="text-white/70 hover:text-white">
+          <button ref={firstFocusRef} onClick={onClose} className="text-white/70 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/50 rounded p-1">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -2591,6 +2637,24 @@ function BulkQRModal({
 }
 function ReportDownloadModal({ onClose }: {onClose: () => void;}) {
   const [loading, setLoading] = useState(false);
+  const firstFocusRef = useRef<HTMLButtonElement>(null);
+  
+  // Focus first element and handle Escape
+  useEffect(() => {
+    if (firstFocusRef.current) {
+      firstFocusRef.current.focus();
+    }
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+  
   const handleDownload = () => {
     setLoading(true);
     setTimeout(() => {
@@ -2603,7 +2667,7 @@ function ReportDownloadModal({ onClose }: {onClose: () => void;}) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
           <h3 className="font-bold text-lg">Rapor İndir</h3>
-          <button onClick={onClose} className="text-white/70 hover:text-white">
+          <button ref={firstFocusRef} onClick={onClose} className="text-white/70 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/50 rounded p-1">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -2667,6 +2731,24 @@ function ParticipantQRModal({
 }: {participant: Participant;onClose: () => void;}) {
   const token = participant.token;
   const url = token ? `${window.location.origin}/#/p/${token}` : '';
+  const firstFocusRef = useRef<HTMLButtonElement>(null);
+  
+  // Focus first element and handle Escape
+  useEffect(() => {
+    if (firstFocusRef.current) {
+      firstFocusRef.current.focus();
+    }
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+  
   const handleCopy = async () => {
     if (!url) return;
     try {
@@ -2681,7 +2763,7 @@ function ParticipantQRModal({
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
           <h3 className="font-bold text-lg">QR Kod</h3>
-          <button onClick={onClose} className="text-white/70 hover:text-white">
+          <button ref={firstFocusRef} onClick={onClose} className="text-white/70 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/50 rounded p-1">
             <X className="w-5 h-5" />
           </button>
         </div>
