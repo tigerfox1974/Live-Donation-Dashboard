@@ -1,4 +1,5 @@
 // Form Validation Utilities
+import { sanitizeInput } from './security';
 
 export interface ValidationRule {
   required?: boolean;
@@ -7,8 +8,16 @@ export interface ValidationRule {
   min?: number;
   max?: number;
   pattern?: RegExp;
+  sanitize?: boolean; // Auto-sanitize input
+  noHtml?: boolean; // Reject HTML tags
+  noScript?: boolean; // Reject script-like patterns
   custom?: (value: any) => string | null;
 }
+
+// Dangerous patterns to detect
+const SCRIPT_PATTERN = /<script|javascript:|on\w+\s*=|data:/i;
+const HTML_TAG_PATTERN = /<[^>]+>/;
+const SQL_INJECTION_PATTERN = /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|ALTER|CREATE|TRUNCATE)\b.*\b(FROM|INTO|TABLE|DATABASE)\b)|(--)|(\/\*)|(\*\/)/i;
 
 export interface ValidationError {
   field: string;
@@ -42,7 +51,27 @@ export function validateField(
     return null;
   }
 
-  const strValue = String(value);
+  let strValue = String(value);
+
+  // Sanitize if requested
+  if (rules.sanitize && typeof value === 'string') {
+    strValue = sanitizeInput(value);
+  }
+
+  // Security: Check for script injection
+  if (rules.noScript !== false && SCRIPT_PATTERN.test(strValue)) {
+    return `${fieldName} geçersiz karakterler içeriyor`;
+  }
+
+  // Security: Check for HTML tags
+  if (rules.noHtml && HTML_TAG_PATTERN.test(strValue)) {
+    return `${fieldName} HTML etiketleri içeremez`;
+  }
+
+  // Security: Check for SQL injection patterns
+  if (SQL_INJECTION_PATTERN.test(strValue)) {
+    return `${fieldName} geçersiz karakterler içeriyor`;
+  }
 
   // MinLength check
   if (rules.minLength !== undefined && strValue.length < rules.minLength) {

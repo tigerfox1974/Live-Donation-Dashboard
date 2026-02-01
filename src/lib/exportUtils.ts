@@ -56,7 +56,7 @@ export const generateExcel = (
     const worksheet = XLSX.utils.aoa_to_sheet(wsData);
     
     // Auto-size columns
-    const colWidths = headers.map((h, i) => {
+    const colWidths = headers.map((h) => {
       const maxLen = Math.max(
         h.length,
         ...sheet.data.map(row => String(row[h] ?? '').length)

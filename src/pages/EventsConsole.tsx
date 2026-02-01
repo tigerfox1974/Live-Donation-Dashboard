@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef, cloneElement, Fragment } from 'react';
+import React, { useMemo, useState, useEffect, useRef, cloneElement, Fragment, CSSProperties, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
@@ -7,6 +7,7 @@ import { cn } from '../lib/utils';
 import { useEvent } from '../contexts/EventContext';
 import { useToast } from '../components/ui/Toast';
 import { LoadingButton, LoadingSpinner } from '../components/ui/Loading';
+import { VirtualizedTableBody, VirtualizedCardList, ROW_HEIGHTS } from '../components/VirtualizedList';
 import {
   downloadQRZip,
   downloadCSV,
@@ -782,150 +783,114 @@ export function EventsConsole({
         {/* Events Table */}
         <Card className="overflow-visible">
           <div className="overflow-x-auto overflow-y-visible">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="px-4 py-3 w-12">
-                    <input
-                      type="checkbox"
-                      checked={
-                      selectedRows.size === filteredEvents.length &&
-                      filteredEvents.length > 0
-                      }
-                      onChange={toggleAllRows}
-                      className="rounded" />
-
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
-                    Durum
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
-                    <button
-                      onClick={() => handleSort('name')}
-                      className="flex items-center gap-1 hover:text-gray-900">
-
-                      Etkinlik Adı <ArrowUpDown className="w-3 h-3" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
-                    <button
-                      onClick={() => handleSort('date')}
-                      className="flex items-center gap-1 hover:text-gray-900">
-
-                      Tarih <ArrowUpDown className="w-3 h-3" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
-                    Mekân
-                  </th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
-                    <button
-                      onClick={() => handleSort('participantCount')}
-                      className="flex items-center gap-1 hover:text-gray-900">
-
-                      Katılımcı <ArrowUpDown className="w-3 h-3" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
-                    Hedef
-                  </th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
-                    <button
-                      onClick={() => handleSort('totalApproved')}
-                      className="flex items-center gap-1 hover:text-gray-900">
-
-                      Onaylı <ArrowUpDown className="w-3 h-3" />
-                    </button>
-                  </th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
-                    Bekleyen
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">
-                    İşlemler
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredEvents.map((event) =>
-                <tr
-                  key={event.id}
-                  className={cn(
-                    'hover:bg-gray-50',
-                    selectedRows.has(event.id) && 'bg-blue-50'
-                  )}>
-
-                    <td className="px-4 py-3">
+            {/* Table Header */}
+            <div className="bg-gray-50 border-b grid grid-cols-[48px_100px_1fr_160px_150px_80px_80px_80px_80px_100px] min-w-[1000px]">
+              <div className="px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={selectedRows.size === filteredEvents.length && filteredEvents.length > 0}
+                  onChange={toggleAllRows}
+                  className="rounded"
+                />
+              </div>
+              <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Durum</div>
+              <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
+                <button onClick={() => handleSort('name')} className="flex items-center gap-1 hover:text-gray-900">
+                  Etkinlik Adı <ArrowUpDown className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
+                <button onClick={() => handleSort('date')} className="flex items-center gap-1 hover:text-gray-900">
+                  Tarih <ArrowUpDown className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Mekân</div>
+              <div className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
+                <button onClick={() => handleSort('participantCount')} className="flex items-center gap-1 hover:text-gray-900">
+                  Katılımcı <ArrowUpDown className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Hedef</div>
+              <div className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
+                <button onClick={() => handleSort('totalApproved')} className="flex items-center gap-1 hover:text-gray-900">
+                  Onaylı <ArrowUpDown className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Bekleyen</div>
+              <div className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">İşlemler</div>
+            </div>
+            {/* Virtualized Table Body */}
+            {filteredEvents.length > 0 && (
+              <VirtualizedTableBody
+                items={filteredEvents}
+                height={Math.min(480, filteredEvents.length * ROW_HEIGHTS.EVENT_ROW)}
+                rowHeight={ROW_HEIGHTS.EVENT_ROW}
+                renderRow={(event: EventRecord, _index: number, style: CSSProperties) => (
+                  <div
+                    key={event.id}
+                    style={style}
+                    className={cn(
+                      'grid grid-cols-[48px_100px_1fr_160px_150px_80px_80px_80px_80px_100px] min-w-[1000px] items-center border-b hover:bg-gray-50',
+                      selectedRows.has(event.id) && 'bg-blue-50'
+                    )}
+                  >
+                    <div className="px-4 py-3">
                       <input
-                      type="checkbox"
-                      checked={selectedRows.has(event.id)}
-                      onChange={() => toggleRowSelection(event.id)}
-                      className="rounded" />
-
-                    </td>
-                    <td className="px-4 py-3">
+                        type="checkbox"
+                        checked={selectedRows.has(event.id)}
+                        onChange={() => toggleRowSelection(event.id)}
+                        className="rounded"
+                      />
+                    </div>
+                    <div className="px-4 py-3">
                       <StatusBadge status={event.status} />
-                    </td>
-                    <td className="px-4 py-3">
+                    </div>
+                    <div className="px-4 py-3">
                       <button
-                      onClick={() => setSelectedEventId(event.id)}
-                      className="font-medium text-[#1e3a5f] hover:underline text-left">
-
+                        onClick={() => setSelectedEventId(event.id)}
+                        className="font-medium text-[#1e3a5f] hover:underline text-left truncate"
+                      >
                         {event.name}
                       </button>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
+                    </div>
+                    <div className="px-4 py-3 text-sm text-gray-600">
                       {new Date(event.date).toLocaleDateString('tr-TR')}
-                      <span className="text-gray-400 ml-2">
-                        {event.startTime}-{event.endTime}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {event.venue}
-                    </td>
-                    <td className="px-4 py-3 text-center text-sm">
-                      {event.participantCount}
-                    </td>
-                    <td className="px-4 py-3 text-center text-sm">
-                      {event.totalTarget}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className="font-semibold text-green-600">
-                        {event.totalApproved}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {event.totalPending > 0 ?
-                    <span className="font-semibold text-amber-600">
-                          {event.totalPending}
-                        </span> :
-
-                    <span className="text-gray-400">0</span>
-                    }
-                    </td>
-                    <td className="px-4 py-3">
+                      <span className="text-gray-400 ml-2">{event.startTime}-{event.endTime}</span>
+                    </div>
+                    <div className="px-4 py-3 text-sm text-gray-600 truncate">{event.venue}</div>
+                    <div className="px-4 py-3 text-center text-sm">{event.participantCount}</div>
+                    <div className="px-4 py-3 text-center text-sm">{event.totalTarget}</div>
+                    <div className="px-4 py-3 text-center">
+                      <span className="font-semibold text-green-600">{event.totalApproved}</span>
+                    </div>
+                    <div className="px-4 py-3 text-center">
+                      {event.totalPending > 0 ? (
+                        <span className="font-semibold text-amber-600">{event.totalPending}</span>
+                      ) : (
+                        <span className="text-gray-400">0</span>
+                      )}
+                    </div>
+                    <div className="px-4 py-3">
                       <RowActionsMenu
-                      event={event}
-                      onView={() => setSelectedEventId(event.id)}
-                      onClone={() => {
-                        setCloneSourceEventId(event.id);
-                        setShowCloneModal(true);
-                      }}
-                      onDelete={() => handleDeleteClick(event.id)}
-                      onSwitchToOperator={() => handleSwitchToOperator(event)}
-                      onSwitchToProjection={() =>
-                      handleSwitchToProjection(event)
-                      }
-                      onSwitchToFinal={() => handleSwitchToFinal(event)}
-                      onStatusChange={(type) =>
-                      handleStatusChange(type, [event.id])}
-                      onExport={() => setShowExportModal(true)}
-                      onReport={() => setShowReportDownloadModal(true)} />
-
-                    </td>
-                  </tr>
+                        event={event}
+                        onView={() => setSelectedEventId(event.id)}
+                        onClone={() => {
+                          setCloneSourceEventId(event.id);
+                          setShowCloneModal(true);
+                        }}
+                        onDelete={() => handleDeleteClick(event.id)}
+                        onSwitchToOperator={() => handleSwitchToOperator(event)}
+                        onSwitchToProjection={() => handleSwitchToProjection(event)}
+                        onSwitchToFinal={() => handleSwitchToFinal(event)}
+                        onStatusChange={(type) => handleStatusChange(type, [event.id])}
+                        onExport={() => setShowExportModal(true)}
+                        onReport={() => setShowReportDownloadModal(true)}
+                      />
+                    </div>
+                  </div>
                 )}
-              </tbody>
-            </table>
+              />
+            )}
           </div>
 
           {filteredEvents.length === 0 &&

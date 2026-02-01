@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useEvent } from '../contexts/EventContext';
 import { Stepper } from '../components/Stepper';
 import { Button } from '../components/ui/Button';
@@ -6,14 +6,12 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
-  Calendar,
-  MapPin,
-  Shield,
-  WifiOff } from
+  Shield } from
 'lucide-react';
-import { cn } from '../lib/utils';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from '../lib/constants';
 import { EventStatusBadge } from '../components/ActiveEventBar';
+import { useOnlineStatus } from '../lib/syncManager';
+import { SyncStatusDot, OfflineBanner } from '../components/SyncStatusIndicator';
 import type { ActiveEventInfo } from '../App';
 interface DonorScreenProps {
   participantId: string;
@@ -33,7 +31,10 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
     'idle' | 'submitting' | 'success' | 'blocked'>(
     'idle');
   const [lastActiveId, setLastActiveId] = useState<string | null>(activeItemId);
-  const [isOnline, setIsOnline] = useState(true);
+  
+  // Enhanced offline detection with sync state
+  const isOnline = useOnlineStatus();
+  
   const participant = participants.find((p) => p.id === participantId);
   const activeItem = getActiveItem();
   // Reset state when active item changes
@@ -44,16 +45,7 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
       setQuantity(1);
     }
   }, [activeItemId, lastActiveId]);
-  useEffect(() => {
-    const updateOnline = () => setIsOnline(navigator.onLine);
-    updateOnline();
-    window.addEventListener('online', updateOnline);
-    window.addEventListener('offline', updateOnline);
-    return () => {
-      window.removeEventListener('online', updateOnline);
-      window.removeEventListener('offline', updateOnline);
-    };
-  }, []);
+  
   const handleSubmit = async () => {
     if (!participant || !activeItem) return;
     // Check if donations are blocked (during transition)
@@ -171,12 +163,17 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
 
       {/* Header */}
       <div className="bg-white border-b px-6 py-4 shadow-sm">
-        <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold text-center mb-1">
-          Bağışçı
-        </p>
-        <h1 className="text-lg font-bold text-[#1e3a5f] text-center truncate">
-          {participant.display_name}
-        </h1>
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold text-center mb-1">
+              Bağışçı
+            </p>
+            <h1 className="text-lg font-bold text-[#1e3a5f] text-center truncate">
+              {participant.display_name}
+            </h1>
+          </div>
+          <SyncStatusDot />
+        </div>
       </div>
 
       {/* Main Content */}
@@ -259,13 +256,7 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
       </div>
 
       {!isOnline &&
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-red-600 text-white p-8 rounded-2xl flex flex-col items-center max-w-2xl text-center shadow-2xl animate-pulse">
-            <WifiOff className="w-20 h-20 mb-6" />
-            <h2 className="text-3xl font-bold mb-3">Bağlantı Kesildi</h2>
-            <p className="text-lg">Lütfen bağlantı geri gelince tekrar deneyin.</p>
-          </div>
-        </div>
+      <OfflineBanner />
       }
     </div>);
 

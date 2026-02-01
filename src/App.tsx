@@ -15,6 +15,8 @@ import { Monitor, Settings, Users, FlaskConical } from 'lucide-react';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from './lib/constants';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider } from './components/ui/Toast';
+import * as serviceWorkerRegistration from './lib/serviceWorkerRegistration';
+import { syncManager } from './lib/syncManager';
 
 // Extended active event type with metadata
 export interface ActiveEventInfo {
@@ -601,6 +603,26 @@ function AppContent() {
   const [broadcastingEventId, setBroadcastingEventId] = useState<string | null>(
     () => activeEvent?.id || null
   );
+
+  // Register Service Worker for offline support
+  useEffect(() => {
+    serviceWorkerRegistration.register({
+      onSuccess: (_reg) => {
+        console.log('[App] SW ready');
+        syncManager.sync();
+      },
+      onUpdate: (_reg) => {
+        console.log('[App] SW updated');
+      },
+      onOffline: () => {
+        console.log('[App] Offline');
+      },
+      onOnline: () => {
+        console.log('[App] Online');
+        syncManager.sync();
+      }
+    });
+  }, []);
 
   // Initialize eventDataMap from localStorage for all events
   useEffect(() => {

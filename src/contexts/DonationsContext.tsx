@@ -3,10 +3,12 @@ import React, {
   useContext,
   useCallback,
   useMemo,
+  useRef,
   ReactNode
 } from 'react';
 import { Donation, DonationItem, Participant } from '../types';
 import { appendAuditLog, AuditActions } from '../lib/auditLog';
+import { queueOperation, createStateSnapshot } from '../lib/offlineIntegration';
 
 // ============ Types ============
 interface DonationsContextType {
@@ -55,6 +57,10 @@ export function DonationsProvider({
   canAcceptDonations
 }: DonationsProviderProps) {
   
+  // Ref to track previous state for rollback
+  const donationsRef = useRef<Donation[]>(donations);
+  donationsRef.current = donations;
+  
   // Memoized filtered donations
   const pendingDonations = useMemo(() => {
     return donations.filter(d => d.status === 'pending');
@@ -67,6 +73,10 @@ export function DonationsProvider({
   const addDonation = useCallback((participantId: string, quantity: number) => {
     if (!activeItemId) return false;
     if (!canAcceptDonations) return false;
+    if (!activeEventId) return false;
+    
+    // Snapshot for rollback
+    const previousState = createStateSnapshot(donationsRef.current);
     
     const newDonation: Donation = {
       id: `d-${Date.now()}`,
@@ -76,15 +86,35 @@ export function DonationsProvider({
       status: 'pending',
       timestamp: Date.now()
     };
+    
+    // Optimistic update
     setDonations((prev) => [newDonation, ...prev]);
+    
+    // Queue for offline sync
+    queueOperation(
+      'ADD_DONATION',
+      activeEventId,
+      { donation: newDonation },
+      { donations: previousState }
+    ).catch((error) => {
+      console.error('[Donations] Failed to queue donation:', error);
+      // Rollback on queue failure
+      setDonations(previousState);
+    });
+    
     return true;
-  }, [activeItemId, canAcceptDonations, setDonations]);
+  }, [activeItemId, activeEventId, canAcceptDonations, setDonations]);
   
   const approveDonation = useCallback((donationId: string) => {
+    if (!activeEventId) return;
+    
+    // Snapshot for rollback
+    const previousState = createStateSnapshot(donationsRef.current);
+    
     setDonations((prev) => {
       const donation = prev.find(d => d.id === donationId);
       
-      if (donation && activeEventId) {
+      if (donation) {
         const participant = participants.find(p => p.id === donation.participant_id);
         const item = items.find(i => i.id === donation.item_id);
         appendAuditLog({
@@ -98,13 +128,26 @@ export function DonationsProvider({
         d.id === donationId ? { ...d, status: 'approved' as const } : d
       );
     });
+    
+    // Queue for offline sync
+    queueOperation(
+      'APPROVE_DONATION',
+      activeEventId,
+      { donationId },
+      { donations: previousState }
+    ).catch(console.error);
   }, [setDonations, activeEventId, participants, items]);
   
   const rejectDonation = useCallback((donationId: string) => {
+    if (!activeEventId) return;
+    
+    // Snapshot for rollback
+    const previousState = createStateSnapshot(donationsRef.current);
+    
     setDonations((prev) => {
       const donation = prev.find(d => d.id === donationId);
       
-      if (donation && activeEventId) {
+      if (donation) {
         const participant = participants.find(p => p.id === donation.participant_id);
         const item = items.find(i => i.id === donation.item_id);
         appendAuditLog({
@@ -118,6 +161,14 @@ export function DonationsProvider({
         d.id === donationId ? { ...d, status: 'rejected' as const } : d
       );
     });
+    
+    // Queue for offline sync
+    queueOperation(
+      'REJECT_DONATION',
+      activeEventId,
+      { donationId },
+      { donations: previousState }
+    ).catch(console.error);
   }, [setDonations, activeEventId, participants, items]);
   
   const undoLastApproval = useCallback(() => {

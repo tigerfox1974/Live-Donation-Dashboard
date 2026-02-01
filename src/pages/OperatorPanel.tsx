@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState, cloneElement, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, cloneElement, useCallback, CSSProperties } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useEvent } from '../contexts/EventContext';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { ProgressBar } from '../components/ProgressBar';
 import { useToast } from '../components/ui/Toast';
+import { VirtualizedCardList, VirtualizedTableBody, ROW_HEIGHTS } from '../components/VirtualizedList';
 import {
   validateForm,
   participantFormValidation,
@@ -1049,68 +1050,79 @@ function QueueTab({
   approveDonation,
   rejectDonation
 }: any) {
+  // Create lookup maps for O(1) access
+  const participantsMap = useMemo(() => 
+    new Map(participants.map((p: any) => [p.id, p])), 
+    [participants]
+  );
+  const itemsMap = useMemo(() => 
+    new Map(items.map((i: any) => [i.id, i])), 
+    [items]
+  );
+
+  const renderDonationCard = useCallback((donation: any) => {
+    const donor = participantsMap.get(donation.participant_id);
+    const item = itemsMap.get(donation.item_id);
+    return (
+      <Card key={donation.id} className="overflow-hidden h-full">
+        <div className="flex items-center p-6 h-full">
+          <div className="flex-1">
+            <div className="flex items-center space-x-3 mb-1">
+              <span className="font-bold text-lg text-[#1e3a5f]">
+                {donor?.display_name}
+              </span>
+              <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
+                {new Date(donation.timestamp).toLocaleTimeString('tr-TR')}
+              </span>
+            </div>
+            <div className="text-gray-600">
+              <span className="font-medium text-black">
+                {donation.quantity} Adet
+              </span>{' '}
+              {item?.name}
+            </div>
+          </div>
+          <div className="flex items-center space-x-3">
+            <Button
+              variant="danger"
+              onClick={() => rejectDonation(donation.id)}
+              className="w-24"
+            >
+              <X className="w-4 h-4 mr-1" /> Reddet
+            </Button>
+            <Button
+              variant="success"
+              onClick={() => approveDonation(donation.id)}
+              className="w-32"
+            >
+              <Check className="w-4 h-4 mr-1" /> Onayla
+            </Button>
+          </div>
+        </div>
+      </Card>
+    );
+  }, [participantsMap, itemsMap, approveDonation, rejectDonation]);
+
   return (
     <div className="max-w-4xl mx-auto">
       <h2 className="text-2xl font-bold text-[#1e3a5f] mb-6">Onay Kuyruğu</h2>
-      <div className="space-y-4">
-        {pendingDonations.length === 0 ?
-        <Card className="p-12 text-center text-gray-500">
+      <VirtualizedCardList
+        items={pendingDonations}
+        height={600}
+        cardHeight={ROW_HEIGHTS.QUEUE_CARD}
+        gap={16}
+        renderCard={renderDonationCard}
+        emptyMessage={
+          <Card className="p-12 text-center text-gray-500">
             <ListChecks className="w-12 h-12 mx-auto mb-4 opacity-20" />
             <p className="text-lg">
               Şu an onay bekleyen bağış bulunmamaktadır.
             </p>
-          </Card> :
-
-        pendingDonations.map((donation: any) => {
-          const donor = participants.find(
-            (p: any) => p.id === donation.participant_id
-          );
-          const item = items.find((i: any) => i.id === donation.item_id);
-          return (
-            <Card key={donation.id} className="overflow-hidden">
-                <div className="flex items-center p-6">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3 mb-1">
-                      <span className="font-bold text-lg text-[#1e3a5f]">
-                        {donor?.display_name}
-                      </span>
-                      <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
-                        {new Date(donation.timestamp).toLocaleTimeString(
-                        'tr-TR'
-                      )}
-                      </span>
-                    </div>
-                    <div className="text-gray-600">
-                      <span className="font-medium text-black">
-                        {donation.quantity} Adet
-                      </span>{' '}
-                      {item?.name}
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <Button
-                    variant="danger"
-                    onClick={() => rejectDonation(donation.id)}
-                    className="w-24">
-
-                      <X className="w-4 h-4 mr-1" /> Reddet
-                    </Button>
-                    <Button
-                    variant="success"
-                    onClick={() => approveDonation(donation.id)}
-                    className="w-32">
-
-                      <Check className="w-4 h-4 mr-1" /> Onayla
-                    </Button>
-                  </div>
-                </div>
-              </Card>);
-
-        })
+          </Card>
         }
-      </div>
-    </div>);
-
+      />
+    </div>
+  );
 }
 // ============ PARTICIPANTS TAB ============
 function ParticipantsTab({
@@ -1125,6 +1137,7 @@ function ParticipantsTab({
   const [filterType, setFilterType] = useState<'all' | 'ORG' | 'PERSON'>('all');
   const firstInputRef = useRef<HTMLSelectElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
   const [filterStatus, setFilterStatus] = useState<
     'all' | 'active' | 'inactive'>(
     'all');
@@ -1480,131 +1493,92 @@ function ParticipantsTab({
       }
 
       {/* Participants Table */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden" ref={tableContainerRef}>
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  QR
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  İsim
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Tip
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Masa
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Toplam Bağış
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Durum
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  İşlemler
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredParticipants.map((p: Participant) =>
-              <tr key={p.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    {p.qr_generated ?
-                  <QrCode className="w-5 h-5 text-green-600" /> :
-
-                  <QrCode className="w-5 h-5 text-gray-300" />
-                  }
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">
-                      {p.display_name}
-                    </div>
-                    {p.notes &&
-                  <div className="text-xs text-gray-500">{p.notes}</div>
-                  }
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                    className={cn(
+          {/* Table Header */}
+          <div className="bg-gray-50 border-b grid grid-cols-[48px_1fr_100px_100px_120px_80px_120px] min-w-[700px]">
+            <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">QR</div>
+            <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">İsim</div>
+            <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tip</div>
+            <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Masa</div>
+            <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Toplam Bağış</div>
+            <div className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Durum</div>
+            <div className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">İşlemler</div>
+          </div>
+          {/* Virtualized Table Body */}
+          {filteredParticipants.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">Katılımcı bulunamadı</div>
+          ) : (
+            <VirtualizedTableBody
+              items={filteredParticipants}
+              height={Math.min(480, filteredParticipants.length * ROW_HEIGHTS.PARTICIPANT_ROW)}
+              rowHeight={ROW_HEIGHTS.PARTICIPANT_ROW}
+              renderRow={(p: Participant, _index: number, style: CSSProperties) => (
+                <div
+                  key={p.id}
+                  style={style}
+                  className="grid grid-cols-[48px_1fr_100px_100px_120px_80px_120px] min-w-[700px] items-center border-b border-gray-100 hover:bg-gray-50"
+                >
+                  <div className="px-4 py-3">
+                    {p.qr_generated ? (
+                      <QrCode className="w-5 h-5 text-green-600" />
+                    ) : (
+                      <QrCode className="w-5 h-5 text-gray-300" />
+                    )}
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="font-medium text-gray-900">{p.display_name}</div>
+                    {p.notes && <div className="text-xs text-gray-500">{p.notes}</div>}
+                  </div>
+                  <div className="px-4 py-3">
+                    <span className={cn(
                       'inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium',
-                      p.type === 'ORG' ?
-                      'bg-purple-100 text-purple-700' :
-                      'bg-blue-100 text-blue-700'
+                      p.type === 'ORG' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
                     )}>
-
-                      {p.type === 'ORG' ?
-                    <Building2 className="w-3 h-3" /> :
-
-                    <User className="w-3 h-3" />
-                    }
+                      {p.type === 'ORG' ? <Building2 className="w-3 h-3" /> : <User className="w-3 h-3" />}
                       {p.type === 'ORG' ? 'Kurum' : 'Kişi'}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {p.table_no}
-                    {p.seat_label && `-${p.seat_label}`}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="font-semibold text-[#1e3a5f]">
-                      {getParticipantTotal(p.id)} Adet
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                    className={cn(
+                  </div>
+                  <div className="px-4 py-3 text-gray-600">
+                    {p.table_no}{p.seat_label && `-${p.seat_label}`}
+                  </div>
+                  <div className="px-4 py-3">
+                    <span className="font-semibold text-[#1e3a5f]">{getParticipantTotal(p.id)} Adet</span>
+                  </div>
+                  <div className="px-4 py-3">
+                    <span className={cn(
                       'px-2 py-1 rounded-full text-xs font-medium',
-                      p.status === 'active' ?
-                      'bg-green-100 text-green-700' :
-                      'bg-gray-100 text-gray-600'
+                      p.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
                     )}>
-
                       {p.status === 'active' ? 'Aktif' : 'Pasif'}
                     </span>
-                  </td>
-                  <td className="px-4 py-3">
+                  </div>
+                  <div className="px-4 py-3">
                     <div className="flex justify-end gap-2">
-                      <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleEdit(p)}
-                      aria-label="Katılımcı düzenle">
-
+                      <Button size="sm" variant="ghost" onClick={() => handleEdit(p)} aria-label="Katılımcı düzenle">
                         <Edit2 className="w-4 h-4" />
                       </Button>
-                      <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleGenerateQR(p)}
-                      aria-label="QR kod üret">
-
+                      <Button size="sm" variant="ghost" onClick={() => handleGenerateQR(p)} aria-label="QR kod üret">
                         <QrCode className="w-4 h-4" />
                       </Button>
                       <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                      updateParticipant(p.id, {
-                        status:
-                        p.status === 'active' ? 'inactive' : 'active'
-                      })
-                      }
-                      aria-label="Katılımcı durum değiştir">
-
-                        {p.status === 'active' ?
-                      <XCircle className="w-4 h-4 text-gray-500" /> :
-
-                      <CheckCircle2 className="w-4 h-4 text-green-500" />
-                      }
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => updateParticipant(p.id, { status: p.status === 'active' ? 'inactive' : 'active' })}
+                        aria-label="Katılımcı durum değiştir"
+                      >
+                        {p.status === 'active' ? (
+                          <XCircle className="w-4 h-4 text-gray-500" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        )}
                       </Button>
                     </div>
-                  </td>
-                </tr>
+                  </div>
+                </div>
               )}
-            </tbody>
-          </table>
+            />
+          )}
         </div>
       </Card>
 

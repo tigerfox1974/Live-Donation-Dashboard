@@ -1,8 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useEvent } from '../contexts/EventContext';
 import { ProgressBar } from '../components/ProgressBar';
 import {
-  WifiOff,
   ChevronLeft,
   ChevronRight,
   PartyPopper,
@@ -13,6 +12,8 @@ import {
 import { cn } from '../lib/utils';
 import { POLVAK_LOGO_URL, AUTO_TRANSITION_DELAY } from '../lib/constants';
 import { EventStatusBadge } from '../components/ActiveEventBar';
+import { useOnlineStatus } from '../lib/syncManager';
+import { SyncStatusIndicator, OfflineBanner } from '../components/SyncStatusIndicator';
 import type { ActiveEventInfo } from '../App';
 // Confetti component for celebration
 function Confetti() {
@@ -80,12 +81,12 @@ export function DisplayScreen({ activeEvent }: DisplayScreenProps) {
     goToPrevItem
   } = useEvent();
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [isOnline, setIsOnline] = useState(true);
   const [showCelebration, setShowCelebration] = useState(false);
-  const [lastCelebratedTotal, setLastCelebratedTotal] = useState<number | null>(
-    null
-  );
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Enhanced offline detection with sync state
+  const isOnline = useOnlineStatus();
+  
   const activeItem = getActiveItem();
   const currentTotal = activeItem ? getItemTotal(activeItem.id) : 0;
   const initialTarget = activeItem ? activeItem.initial_target : 0;
@@ -96,13 +97,11 @@ export function DisplayScreen({ activeEvent }: DisplayScreenProps) {
   const sortedItems = [...items].sort((a, b) => a.order - b.order);
   const currentItemIndex = sortedItems.findIndex((i) => i.id === activeItemId);
   const isLastItem = currentItemIndex === sortedItems.length - 1;
-  // Clock and online check
+  // Clock update
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    const onlineCheck = setInterval(() => setIsOnline(navigator.onLine), 5000);
     return () => {
       clearInterval(timer);
-      clearInterval(onlineCheck);
     };
   }, []);
   // Handle target reached - trigger celebration and countdown
@@ -161,7 +160,6 @@ export function DisplayScreen({ activeEvent }: DisplayScreenProps) {
   }, [isTransitioning, transitionCountdown, isLastItem]);
   // Reset celebration state when item changes
   useEffect(() => {
-    setLastCelebratedTotal(null);
     setShowCelebration(false);
     setHasReachedTarget(false); // Yeni item için hedef durumunu sıfırla
   }, [activeItemId]);
@@ -513,17 +511,14 @@ export function DisplayScreen({ activeEvent }: DisplayScreenProps) {
         </div>
       </footer>
 
-      {/* Offline Overlay */}
+      {/* Sync Status Indicator */}
+      <div className="fixed top-4 right-4 z-40">
+        <SyncStatusIndicator size="md" />
+      </div>
+
+      {/* Offline Banner */}
       {!isOnline &&
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-red-600 text-white p-8 rounded-2xl flex flex-col items-center max-w-2xl text-center shadow-2xl animate-pulse">
-            <WifiOff className="w-24 h-24 mb-6" />
-            <h2 className="text-4xl font-bold mb-4">Bağlantı Kesildi</h2>
-            <p className="text-2xl">
-              Lütfen bekleyiniz, operatör kontrol ediyor.
-            </p>
-          </div>
-        </div>
+      <OfflineBanner />
       }
     </div>);
 

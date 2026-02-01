@@ -103,14 +103,14 @@ function EventStateProvider({
     activeEventId ? getEventItemsKey(activeEventId) : '',
     items,
     500,
-    !!activeEventId && items.length > 0
+    !!activeEventId
   );
   
   useDebouncedLocalStorage(
     activeEventId ? getEventParticipantsKey(activeEventId) : '',
     participants,
     500,
-    !!activeEventId && participants.length > 0
+    !!activeEventId
   );
   
   useDebouncedLocalStorage(

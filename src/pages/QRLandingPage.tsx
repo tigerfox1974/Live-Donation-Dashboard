@@ -1,8 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { QrCode, Lock, X, AlertCircle } from 'lucide-react';
+import { QrCode, Lock, X, AlertCircle, Shield } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils';
 import { POLVAK_LOGO_URL, ORG_NAME, ORG_SHORT_NAME } from '../lib/constants';
+import { 
+  verifyOperatorPin, 
+  isRateLimited, 
+  recordAttempt, 
+  getRemainingAttempts,
+  createSession,
+  sanitizeInput,
+  getCsrfToken,
+  validateCsrfToken
+} from '../lib/security';
+import { isDevelopment } from '../lib/config';
+import { logger } from '../lib/logger';
+import { PinChangeModal } from '../components/PinChangeModal';
 interface QRLandingPageProps {
   onOperatorLogin: () => void;
   isAuthenticated?: boolean;
@@ -14,28 +27,94 @@ export function QRLandingPage({
   onAlreadyAuthenticated
 }: QRLandingPageProps) {
   const [showPinModal, setShowPinModal] = useState(false);
+  const [showPinChangeModal, setShowPinChangeModal] = useState(false);
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const DEMO_PIN = '1234'; // Demo PIN for UI purposes
+  const [remainingAttempts, setRemainingAttempts] = useState<number | null>(null);
+  const [lockoutTime, setLockoutTime] = useState<number | null>(null);
+  const [csrfToken] = useState(() => getCsrfToken());
+  
   useEffect(() => {
     if (isAuthenticated && onAlreadyAuthenticated) {
       onAlreadyAuthenticated();
     }
   }, [isAuthenticated, onAlreadyAuthenticated]);
-  const handlePinSubmit = () => {
+
+  // Update lockout countdown
+  useEffect(() => {
+    if (lockoutTime === null) return;
+    
+    const interval = setInterval(() => {
+      const rateLimit = isRateLimited('operator_pin');
+      if (!rateLimit.limited) {
+        setLockoutTime(null);
+        setError('');
+      } else {
+        setLockoutTime(rateLimit.remainingTime || 0);
+      }
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [lockoutTime]);
+
+  const handlePinSubmit = async () => {
+    // Validate CSRF token
+    if (!validateCsrfToken(csrfToken)) {
+      setError('Güvenlik tokeni geçersiz. Sayfayı yenileyin.');
+      logger.warn('CSRF validation failed on operator login');
+      return;
+    }
+
+    // Check rate limiting
+    const rateLimit = isRateLimited('operator_pin');
+    if (rateLimit.limited) {
+      const minutes = Math.ceil((rateLimit.remainingTime || 0) / 60000);
+      setError(`Çok fazla hatalı deneme. ${minutes} dakika sonra tekrar deneyin.`);
+      setLockoutTime(rateLimit.remainingTime || 0);
+      logger.warn('Rate limited operator login attempt');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
-    // Simulate verification delay
-    setTimeout(() => {
-      if (pin === DEMO_PIN) {
+
+    // Sanitize input
+    const sanitizedPin = sanitizeInput(pin);
+
+    try {
+      // Verify PIN with async function
+      const isValid = await verifyOperatorPin(sanitizedPin);
+      
+      if (isValid) {
+        recordAttempt('operator_pin', true);
+        createSession();
+        logger.info('Operator login successful');
         onOperatorLogin();
       } else {
-        setError('Geçersiz PIN kodu. Tekrar deneyin.');
+        recordAttempt('operator_pin', false);
+        const remaining = getRemainingAttempts('operator_pin');
+        setRemainingAttempts(remaining);
+        
+        if (remaining > 0) {
+          setError(`Geçersiz PIN kodu. ${remaining} deneme hakkınız kaldı.`);
+        } else {
+          const newRateLimit = isRateLimited('operator_pin');
+          if (newRateLimit.limited) {
+            const minutes = Math.ceil((newRateLimit.remainingTime || 0) / 60000);
+            setError(`Hesap kilitlendi. ${minutes} dakika sonra tekrar deneyin.`);
+            setLockoutTime(newRateLimit.remainingTime || 0);
+          }
+        }
         setPin('');
+        logger.warn('Failed operator login attempt');
       }
-      setIsLoading(false);
-    }, 500);
+    } catch (err) {
+      logger.error('Error during PIN verification', err);
+      setError('Bir hata oluştu. Tekrar deneyin.');
+    }
+    
+    setIsLoading(false);
   };
   const handlePinChange = (value: string) => {
     // Only allow digits and max 4 characters
@@ -237,15 +316,20 @@ export function QRLandingPage({
               }
               </div>
 
-              {/* Demo Hint */}
-              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-center">
-                <p className="text-xs text-amber-700">
-                  <strong>Demo:</strong> PIN kodu{' '}
-                  <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono">
-                    1234
-                  </code>
-                </p>
-              </div>
+              {/* Demo Hint - Only in development */}
+              {isDevelopment && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-center">
+                  <p className="text-xs text-amber-700">
+                    <strong>Demo:</strong> Varsayılan PIN kodu{' '}
+                    <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono">
+                      1234
+                    </code>
+                  </p>
+                </div>
+              )}
+
+              {/* Hidden CSRF token */}
+              <input type="hidden" name="_csrf" value={csrfToken} />
 
               {/* Actions */}
               <div className="flex gap-3">
@@ -256,6 +340,7 @@ export function QRLandingPage({
                   setShowPinModal(false);
                   setPin('');
                   setError('');
+                  setRemainingAttempts(null);
                 }}>
 
                   İptal
@@ -264,16 +349,39 @@ export function QRLandingPage({
                 variant="primary"
                 className="flex-1"
                 onClick={handlePinSubmit}
-                disabled={pin.length !== 4}
+                disabled={pin.length !== 4 || lockoutTime !== null}
                 isLoading={isLoading}>
 
                   Giriş
                 </Button>
               </div>
+
+              {/* PIN Change Link - Admin only */}
+              <div className="text-center pt-2 border-t border-gray-100">
+                <button
+                  onClick={() => {
+                    setShowPinModal(false);
+                    setShowPinChangeModal(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <Shield className="w-3 h-3" />
+                  PIN Değiştir (Admin)
+                </button>
+              </div>
             </div>
           </div>
         </div>
       }
+
+      {/* PIN Change Modal */}
+      <PinChangeModal
+        isOpen={showPinChangeModal}
+        onClose={() => setShowPinChangeModal(false)}
+        onSuccess={() => {
+          // Optionally show success message
+        }}
+      />
     </div>);
 
 }
