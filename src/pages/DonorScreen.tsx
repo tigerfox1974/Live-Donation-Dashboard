@@ -92,7 +92,8 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
           <img
             src={POLVAK_LOGO_URL}
             alt={ORG_SHORT_NAME}
-            className="w-20 h-20 mx-auto mb-4" />
+            className="w-20 h-20 mx-auto mb-4"
+            loading="lazy" />
 
           <h2 className="text-xl font-bold text-gray-900">
             Etkinlik Bekleniyor
@@ -187,7 +188,8 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
               <img
                 src={activeItem.image_url}
                 alt={activeItem.name}
-                className="w-full h-full object-cover" />
+                className="w-full h-full object-cover"
+                loading="lazy" />
 
               <div className="absolute top-4 right-4 bg-[#f59e0b] text-white text-xs font-bold px-3 py-1 rounded-full shadow-sm">
                 AKTİF KALEM
@@ -246,7 +248,8 @@ export function DonorScreen({ participantId, activeEvent }: DonorScreenProps) {
             <img
               src={POLVAK_LOGO_URL}
               alt={ORG_SHORT_NAME}
-              className="w-12 h-12 mb-2" />
+              className="w-12 h-12 mb-2"
+              loading="lazy" />
 
             <p className="text-xs text-gray-400">
               {ORG_SHORT_NAME} - {ORG_NAME} © {new Date().getFullYear()}

@@ -189,7 +189,12 @@ export function DisplayScreen({ activeEvent }: DisplayScreenProps) {
   if (!activeItem)
   return (
     <div className="h-screen flex items-center justify-center bg-[#0f172a] text-white text-4xl">
-        <img src={POLVAK_LOGO_URL} alt="POLVAK" className="w-32 h-32 mr-6" />
+        <img 
+          src={POLVAK_LOGO_URL} 
+          alt="POLVAK" 
+          className="w-32 h-32 mr-6" 
+          loading="lazy" 
+        />
         Lütfen bir kalem seçiniz...
       </div>);
 
