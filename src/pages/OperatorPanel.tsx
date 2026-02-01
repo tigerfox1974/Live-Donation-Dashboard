@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, cloneElement } from 'react';
+import React, { useEffect, useMemo, useRef, useState, cloneElement, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useEvent } from '../contexts/EventContext';
 import { Button } from '../components/ui/Button';
@@ -52,7 +52,9 @@ import {
   Tv,
   MapPin,
   WifiOff,
-  Loader2 } from
+  Loader2,
+  Keyboard,
+  HelpCircle } from
 'lucide-react';
 import { cn } from '../lib/utils';
 import { Participant, ParticipantType, DonationItem } from '../types';
@@ -151,12 +153,14 @@ export function OperatorPanel({
     'live' | 'queue' | 'participants' | 'items' | 'reports'>(
     'live');
   const [showEventSelector, setShowEventSelector] = useState(false);
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [keyAction, setKeyAction] = useState<{
     message: string;
     type: 'success' | 'info' | 'error';
   } | null>(null);
   const keyActionTimeout = useRef<number | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [forceCrash, setForceCrash] = useState(false);
   const showErrorTest = window.location.hostname === 'localhost';
   const {
@@ -236,7 +240,67 @@ export function OperatorPanel({
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const isInputFocused = tag === 'input' || tag === 'textarea' || tag === 'select';
+      
+      // Global shortcuts that work everywhere
+      // ? - Keyboard help modal
+      if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+        event.preventDefault();
+        setShowKeyboardHelp(prev => !prev);
+        return;
+      }
+      
+      // Escape - Close any open modal
+      if (event.key === 'Escape') {
+        if (showKeyboardHelp) {
+          setShowKeyboardHelp(false);
+          return;
+        }
+        if (showEventSelector) {
+          setShowEventSelector(false);
+          return;
+        }
+        return;
+      }
+      
+      // / - Focus search (only when not in input)
+      if (event.key === '/' && !isInputFocused) {
+        event.preventDefault();
+        if (searchInputRef.current) {
+          searchInputRef.current.focus();
+        }
+        notifyKeyAction('Arama alanına odaklandı.', 'info');
+        return;
+      }
+      
+      // Tab switching with number keys 1-5 (only when not in input)
+      if (!isInputFocused && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        const tabMap: Record<string, 'live' | 'queue' | 'participants' | 'items' | 'reports'> = {
+          '1': 'live',
+          '2': 'queue', 
+          '3': 'participants',
+          '4': 'items',
+          '5': 'reports'
+        };
+        const tabLabels: Record<string, string> = {
+          '1': 'Canlı Kontrol',
+          '2': 'Onay Kuyruğu',
+          '3': 'Katılımcılar',
+          '4': 'İhtiyaç Kalemleri',
+          '5': 'Raporlar'
+        };
+        if (tabMap[event.key]) {
+          event.preventDefault();
+          setActiveTab(tabMap[event.key]);
+          notifyKeyAction(`${tabLabels[event.key]} sekmesine geçildi.`, 'info');
+          return;
+        }
+      }
+      
+      // Don't process other shortcuts if in input field
+      if (isInputFocused) return;
+      
+      // Space - Approve pending donation
       if (event.code === 'Space') {
         const pending = donations.find((d) => d.status === 'pending');
         if (pending) {
@@ -246,7 +310,10 @@ export function OperatorPanel({
         } else {
           notifyKeyAction('Bekleyen bağış yok.', 'info');
         }
+        return;
       }
+      
+      // R - Reject pending donation
       if (event.key.toLowerCase() === 'r') {
         const pending = donations.find((d) => d.status === 'pending');
         if (pending) {
@@ -256,27 +323,69 @@ export function OperatorPanel({
         } else {
           notifyKeyAction('Bekleyen bağış yok.', 'info');
         }
+        return;
       }
-      if (event.key.toLowerCase() === 'n') {
+      
+      // U - Undo last approval
+      if (event.key.toLowerCase() === 'u') {
+        event.preventDefault();
+        undoLastApproval();
+        notifyKeyAction('Son onay geri alındı.', 'info');
+        return;
+      }
+      
+      // N - Next item (without Ctrl)
+      if (event.key.toLowerCase() === 'n' && !event.ctrlKey) {
         event.preventDefault();
         handleNextItem();
         notifyKeyAction('Sonraki kaleme geçildi.', 'info');
+        return;
       }
-      if (event.key.toLowerCase() === 'p') {
+      
+      // Ctrl+N - Go to Participants tab (add new participant)
+      if (event.key.toLowerCase() === 'n' && event.ctrlKey) {
+        event.preventDefault();
+        setActiveTab('participants');
+        notifyKeyAction('Katılımcılar sekmesine geçildi. Form için butona tıklayın.', 'info');
+        return;
+      }
+      
+      // Ctrl+I - Go to Items tab (add new item)
+      if (event.key.toLowerCase() === 'i' && event.ctrlKey) {
+        event.preventDefault();
+        setActiveTab('items');
+        notifyKeyAction('Kalemler sekmesine geçildi. Form için butona tıklayın.', 'info');
+        return;
+      }
+      
+      // P - Previous item (without Ctrl)
+      if (event.key.toLowerCase() === 'p' && !event.ctrlKey) {
         event.preventDefault();
         handlePrevItem();
         notifyKeyAction('Önceki kaleme geçildi.', 'info');
+        return;
       }
+      
+      // F - Final screen
       if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
         setFinalScreen(true);
         window.location.hash = '#/final';
         notifyKeyAction('Final ekranına geçildi.', 'info');
+        return;
+      }
+      
+      // B - Toggle broadcast
+      if (event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        handleToggleBroadcast();
+        notifyKeyAction(isBroadcasting ? 'Yayın durduruldu.' : 'Yayın başlatıldı.', 'info');
+        return;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [approveDonation, rejectDonation, donations, handleNextItem, handlePrevItem, setFinalScreen]);
+  }, [approveDonation, rejectDonation, undoLastApproval, donations, handleNextItem, handlePrevItem, setFinalScreen, showKeyboardHelp, showEventSelector, isBroadcasting]);
   const handleSelectEvent = (event: ActiveEventInfo) => {
     if (onSetActiveEvent) {
       onSetActiveEvent(event);
@@ -344,10 +453,16 @@ export function OperatorPanel({
               Test ErrorBoundary
             </button>
           )}
+          <button
+            onClick={() => setShowKeyboardHelp(true)}
+            className="flex items-center gap-1 bg-white/10 hover:bg-white/20 px-2 py-1.5 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+            title="Klavye Kısayolları (?)">
+            <HelpCircle className="w-4 h-4" />
+          </button>
           {onLogout &&
           <button
             onClick={onLogout}
-            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors">
+            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-white/50">
 
               <LogOut className="w-4 h-4" />
               <span>Çıkış</span>
@@ -548,6 +663,11 @@ export function OperatorPanel({
         currentEventId={activeEvent?.id}
         events={events} />
 
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcutsModal
+        isOpen={showKeyboardHelp}
+        onClose={() => setShowKeyboardHelp(false)} />
+
       {!isOnline &&
       <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-red-600 text-white p-8 rounded-2xl flex flex-col items-center max-w-2xl text-center shadow-2xl animate-pulse">
@@ -561,13 +681,103 @@ export function OperatorPanel({
     </div>);
 
 }
+
+// ============ KEYBOARD SHORTCUTS MODAL ============
+function KeyboardShortcutsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const firstFocusRef = useRef<HTMLButtonElement>(null);
+  
+  useEffect(() => {
+    if (isOpen && firstFocusRef.current) {
+      firstFocusRef.current.focus();
+    }
+  }, [isOpen]);
+  
+  if (!isOpen) return null;
+  
+  const shortcuts = [
+    { category: 'Navigasyon', items: [
+      { key: '1-5', desc: 'Sekme değiştir' },
+      { key: '/', desc: 'Arama alanına odaklan' },
+      { key: 'Esc', desc: 'Modal/popup kapat' },
+      { key: '?', desc: 'Bu yardımı aç/kapat' }
+    ]},
+    { category: 'Hızlı Erişim', items: [
+      { key: 'Ctrl+N', desc: 'Katılımcılar sekmesine git' },
+      { key: 'Ctrl+I', desc: 'Kalemler sekmesine git' }
+    ]},
+    { category: 'Bağış İşlemleri', items: [
+      { key: 'Space', desc: 'Bekleyen bağışı onayla' },
+      { key: 'R', desc: 'Bekleyen bağışı reddet' },
+      { key: 'U', desc: 'Son onayı geri al' }
+    ]},
+    { category: 'Kalem Kontrolü', items: [
+      { key: 'N', desc: 'Sonraki kaleme geç' },
+      { key: 'P', desc: 'Önceki kaleme geç' },
+      { key: 'F', desc: 'Final ekranına git' }
+    ]},
+    { category: 'Yayın', items: [
+      { key: 'B', desc: 'Yayını başlat/durdur' }
+    ]}
+  ];
+  
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div 
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+        role="dialog"
+        aria-labelledby="keyboard-help-title"
+      >
+        <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Keyboard className="w-5 h-5" />
+            <h3 id="keyboard-help-title" className="font-bold text-lg">Klavye Kısayolları</h3>
+          </div>
+          <button 
+            ref={firstFocusRef}
+            onClick={onClose} 
+            className="text-white/70 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/50 rounded p-1"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6">
+          {shortcuts.map((section) => (
+            <div key={section.category}>
+              <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                {section.category}
+              </h4>
+              <div className="space-y-2">
+                {section.items.map((item) => (
+                  <div key={item.key} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50">
+                    <span className="text-gray-700">{item.desc}</span>
+                    <kbd className="px-2.5 py-1 bg-gray-100 border border-gray-300 rounded-md text-sm font-mono font-semibold text-gray-800 shadow-sm">
+                      {item.key}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        
+        <div className="px-6 py-4 bg-gray-50 border-t text-center">
+          <p className="text-sm text-gray-500">
+            <kbd className="px-1.5 py-0.5 bg-gray-200 rounded text-xs font-mono">?</kbd> tuşuna basarak bu pencereyi istediğiniz zaman açabilirsiniz
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============ TAB BUTTON ============
 function TabButton({ active, onClick, icon, label, badge }: any) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        'w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-colors',
+        'w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/50 focus:ring-offset-1',
         active ?
         'bg-[#1e3a5f]/10 text-[#1e3a5f]' :
         'text-gray-600 hover:bg-gray-50'
@@ -903,6 +1113,8 @@ function ParticipantsTab({
 }: any) {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'ORG' | 'PERSON'>('all');
+  const firstInputRef = useRef<HTMLSelectElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [filterStatus, setFilterStatus] = useState<
     'all' | 'active' | 'inactive'>(
     'all');
@@ -975,6 +1187,26 @@ function ParticipantsTab({
     }
     resetForm();
   };
+  
+  // Focus first input when form opens
+  useEffect(() => {
+    if (showForm && firstInputRef.current) {
+      firstInputRef.current.focus();
+    }
+  }, [showForm]);
+  
+  // Handle form keydown for Enter submit and Escape close
+  const handleFormKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      resetForm();
+    }
+  };
+  
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
@@ -1060,8 +1292,9 @@ function ParticipantsTab({
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
+              ref={searchInputRef}
               type="text"
-              placeholder="İsim veya masa ara..."
+              placeholder="İsim veya masa ara... (/ ile odaklan)"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20" />
@@ -1093,7 +1326,7 @@ function ParticipantsTab({
 
       {/* Add/Edit Form */}
       {showForm &&
-      <Card className="p-6">
+      <Card className="p-6" onKeyDown={handleFormKeyDown}>
           <h3 className="text-lg font-bold text-[#1e3a5f] mb-4">
             {editingId ? 'Katılımcı Düzenle' : 'Yeni Katılımcı Ekle'}
           </h3>
@@ -1103,6 +1336,7 @@ function ParticipantsTab({
                 Tip *
               </label>
               <select
+              ref={firstInputRef}
               value={formData.type}
               onChange={(e) =>
               setFormData({
@@ -1423,6 +1657,11 @@ function ItemsTab({
     notes: '',
     order: items.length + 1
   });
+  
+  // Refs for keyboard navigation
+  const firstInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  
   const sortedItems = useMemo(() => {
     return [...items].sort((a, b) => a.order - b.order);
   }, [items]);
@@ -1468,6 +1707,26 @@ function ItemsTab({
     }
     resetForm();
   };
+  
+  // Focus first input when form opens
+  useEffect(() => {
+    if (showForm && firstInputRef.current) {
+      firstInputRef.current.focus();
+    }
+  }, [showForm]);
+  
+  // Handle form keydown for Enter submit and Escape close
+  const handleFormKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      resetForm();
+    }
+  };
+  
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
@@ -1557,7 +1816,7 @@ function ItemsTab({
 
       {/* Add/Edit Form */}
       {showForm &&
-      <Card className="p-6">
+      <Card className="p-6" onKeyDown={handleFormKeyDown}>
           <h3 className="text-lg font-bold text-[#1e3a5f] mb-4">
             {editingId ? 'Kalem Düzenle' : 'Yeni Kalem Ekle'}
           </h3>
@@ -1567,6 +1826,7 @@ function ItemsTab({
                 Kalem Adı *
               </label>
               <input
+              ref={firstInputRef}
               type="text"
               value={formData.name}
               onChange={(e) =>

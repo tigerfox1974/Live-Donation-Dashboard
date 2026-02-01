@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef, cloneElement, Fragment } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { ProgressBar } from '../components/ProgressBar';
@@ -6,6 +7,28 @@ import { cn } from '../lib/utils';
 import { useEvent } from '../contexts/EventContext';
 import { useToast } from '../components/ui/Toast';
 import { LoadingButton, LoadingSpinner } from '../components/ui/Loading';
+import {
+  downloadQRZip,
+  downloadCSV,
+  downloadExcel,
+  downloadPDF,
+  exportDonationsCSV,
+  exportDonationsExcel,
+  exportParticipantsCSV,
+  exportParticipantsExcel,
+  exportItemsCSV,
+  exportItemsExcel,
+  exportAuditLogCSV,
+  exportAuditLogExcel,
+  generateEventReportPDF,
+  ExportProgress
+} from '../lib/exportUtils';
+import {
+  readAuditLog as readAuditLogFromStorage,
+  appendAuditLog,
+  AuditActions,
+  type AuditLogEntry as AuditLogType
+} from '../lib/auditLog';
 import {
   validateForm,
   eventFormValidation,
@@ -90,60 +113,9 @@ interface EventsConsoleProps {
   onImportEvents: (payload: {events: EventRecord[];eventData?: EventData[]}) => void;
   onUpdateEventStats: (eventId: string, patch: Partial<EventRecord>) => void;
 }
-const MOCK_AUDIT_LOG: AuditLogEntry[] = [
-{
-  id: 'log-1',
-  eventId: 'evt-1',
-  timestamp: Date.now() - 300000,
-  user: 'admin',
-  action: 'Bağış onaylandı',
-  details: 'Kıbrıs Türk T.O. - 5 adet Motosiklet'
-},
-{
-  id: 'log-2',
-  eventId: 'evt-1',
-  timestamp: Date.now() - 600000,
-  user: 'admin',
-  action: 'Kalem sırası değişti',
-  details: 'Motosiklet → 1. sıra'
-},
-{
-  id: 'log-3',
-  eventId: 'evt-1',
-  timestamp: Date.now() - 86400000,
-  user: 'admin',
-  action: 'Etkinlik canlıya alındı',
-  details: ''
-},
-{
-  id: 'log-4',
-  eventId: 'evt-1',
-  timestamp: Date.now() - 86400000 * 2,
-  user: 'admin',
-  action: 'Katılımcılar içe aktarıldı',
-  details: '150 katılımcı eklendi'
-},
-{
-  id: 'log-5',
-  eventId: 'evt-1',
-  timestamp: Date.now() - 86400000 * 30,
-  user: 'admin',
-  action: 'Etkinlik oluşturuldu',
-  details: ''
-}];
 
+// Audit log key for localStorage sync
 const AUDIT_LOG_KEY = 'polvak_audit_log';
-
-const readAuditLog = () => {
-  try {
-    const raw = localStorage.getItem(AUDIT_LOG_KEY);
-    if (!raw) return [] as AuditLogEntry[];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as AuditLogEntry[]) : [];
-  } catch {
-    return [] as AuditLogEntry[];
-  }
-};
 
 const downloadTextFile = (filename: string, content: string, type: string) => {
   const blob = new Blob([content], { type });
@@ -377,26 +349,21 @@ export function EventsConsole({
   );
   const [showReportDownloadModal, setShowReportDownloadModal] = useState(false);
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(() => {
-    const stored = readAuditLog();
-    return stored.length > 0 ? stored : MOCK_AUDIT_LOG;
+    return readAuditLogFromStorage();
   });
   const selectedEvent = events.find((e) => e.id === selectedEventId);
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== AUDIT_LOG_KEY) return;
-      const next = readAuditLog();
-      if (next.length > 0) {
-        setAuditLog(next);
-      }
+      const next = readAuditLogFromStorage();
+      setAuditLog(next);
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
   useEffect(() => {
-    const next = readAuditLog();
-    if (next.length > 0) {
-      setAuditLog(next);
-    }
+    const next = readAuditLogFromStorage();
+    setAuditLog(next);
   }, [events]);
   // Stats
   const stats = useMemo(() => {
@@ -977,6 +944,11 @@ export function EventsConsole({
         existingNames={events.map((event) => event.name)}
         onCreate={(input) => {
           onCreateEvent(input);
+          appendAuditLog({
+            eventId: input.id || 'new',
+            action: AuditActions.EVENT_CREATED,
+            details: input.name
+          });
           toast.success('Yeni etkinlik oluşturuldu');
           setShowNewEventModal(false);
         }} />
@@ -1002,6 +974,15 @@ export function EventsConsole({
           Array.from(selectedRows) :
           [];
           if (ids.length > 0) {
+            // Log each deletion
+            ids.forEach(id => {
+              const event = events.find(e => e.id === id);
+              appendAuditLog({
+                eventId: id,
+                action: AuditActions.EVENT_DELETED,
+                details: event?.name || id
+              });
+            });
             onDeleteEvents(ids);
             toast.success(`${ids.length} etkinlik silindi`);
           }
@@ -1035,6 +1016,19 @@ export function EventsConsole({
           onUpdateEventStatus(pendingStatusEventIds, nextStatus);
           const statusText = statusChangeType === 'live' ? 'canlıya alındı' : 
             statusChangeType === 'close' ? 'kapatıldı' : 'arşivlendi';
+          const auditAction = statusChangeType === 'live' ? AuditActions.EVENT_LIVE :
+            statusChangeType === 'close' ? AuditActions.EVENT_CLOSED : AuditActions.EVENT_ARCHIVED;
+          
+          // Log each status change
+          pendingStatusEventIds.forEach(id => {
+            const event = events.find(e => e.id === id);
+            appendAuditLog({
+              eventId: id,
+              action: auditAction,
+              details: event?.name || id
+            });
+          });
+          
           toast.success(`${pendingStatusEventIds.length} etkinlik ${statusText}`);
           setSelectedRows(new Set());
           setPendingStatusEventIds([]);
@@ -2539,23 +2533,14 @@ function TransactionsTab() {
   };
 
   const handleExportCSV = () => {
-    const BOM = '\uFEFF';
-    const headers = ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum'];
-    const rows = filteredDonations.map((d) => [
-      new Date(d.timestamp).toLocaleString('tr-TR'),
-      getParticipantName(d.participant_id),
-      getItemName(d.item_id),
-      d.quantity.toString(),
-      d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
-    ]);
-    const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `bagis-islemleri-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const data = filteredDonations.map((d) => ({
+      'Tarih/Saat': new Date(d.timestamp).toLocaleString('tr-TR'),
+      'Katılımcı': getParticipantName(d.participant_id),
+      'Kalem': getItemName(d.item_id),
+      'Adet': d.quantity,
+      'Durum': d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
+    }));
+    downloadCSV(data, `bagis-islemleri-${Date.now()}`, ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum']);
   };
 
   return (
@@ -2664,7 +2649,7 @@ function TransactionsTab() {
 
 }
 function ReportsTab() {
-  const { donations, participants, items, getItemTotal, getGrandTotal, getGrandTarget, getParticipantTotal } = useEvent();
+  const { donations, participants, items, getItemTotal, getGrandTotal, getGrandTarget, getParticipantTotal, activeEventId } = useEvent();
   const [showReportDownloadModal, setShowReportDownloadModal] = useState(false);
   const [selectedReportType, setSelectedReportType] = useState<string | null>(null);
 
@@ -2679,59 +2664,81 @@ function ReportsTab() {
   };
 
   const handleDownloadReport = (type: string) => {
-    const BOM = '\uFEFF';
     const approvedDonations = donations.filter(d => d.status === 'approved');
+    const eventIdForLog = activeEventId || 'system';
 
     switch (type) {
       case 'transactions-csv': {
-        const headers = ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum'];
-        const rows = donations.map((d) => [
-          new Date(d.timestamp).toLocaleString('tr-TR'),
-          getParticipantName(d.participant_id),
-          getItemName(d.item_id),
-          d.quantity.toString(),
-          d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
-        ]);
-        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
-        downloadFile(csv, 'tum-islemler.csv', 'text/csv;charset=utf-8');
+        const data = donations.map((d) => ({
+          'Tarih/Saat': new Date(d.timestamp).toLocaleString('tr-TR'),
+          'Katılımcı': getParticipantName(d.participant_id),
+          'Kalem': getItemName(d.item_id),
+          'Adet': d.quantity,
+          'Durum': d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
+        }));
+        downloadCSV(data, 'tum-islemler', ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum']);
+        appendAuditLog({ eventId: eventIdForLog, action: AuditActions.REPORT_GENERATED, details: `Rapor tipi: Tüm İşlemler CSV (${data.length} kayıt)` });
         break;
       }
       case 'transactions-xlsx': {
-        // For now, generate CSV with .xlsx extension (basic Excel compatibility)
-        const headers = ['Tarih/Saat', 'Katılımcı', 'Kalem', 'Adet', 'Durum'];
-        const rows = donations.map((d) => [
-          new Date(d.timestamp).toLocaleString('tr-TR'),
-          getParticipantName(d.participant_id),
-          getItemName(d.item_id),
-          d.quantity.toString(),
-          d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
-        ]);
-        const csv = BOM + [headers, ...rows].map(row => row.join('\t')).join('\n');
-        downloadFile(csv, 'tum-islemler.xls', 'application/vnd.ms-excel;charset=utf-8');
+        // Real XLSX export using xlsx library
+        const data = donations.map((d) => ({
+          'Tarih/Saat': new Date(d.timestamp).toLocaleString('tr-TR'),
+          'Katılımcı': getParticipantName(d.participant_id),
+          'Kalem': getItemName(d.item_id),
+          'Adet': d.quantity,
+          'Durum': d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen'
+        }));
+        downloadExcel([{ name: 'Tüm İşlemler', data }], 'tum-islemler');
+        appendAuditLog({ eventId: eventIdForLog, action: AuditActions.REPORT_GENERATED, details: `Rapor tipi: Tüm İşlemler XLSX (${data.length} kayıt)` });
         break;
       }
       case 'summary': {
+        // Generate PDF report using the utility
         const grandTotal = getGrandTotal();
         const grandTarget = getGrandTarget();
-        const progress = grandTarget > 0 ? ((grandTotal / grandTarget) * 100).toFixed(1) : '0';
-        const summary = `ETKİNLİK ÖZET RAPORU
-================================
-
-Toplam Hedef: ${grandTarget} adet
-Toplam Onaylı Bağış: ${grandTotal} adet
-İlerleme: %${progress}
-
-Katılımcı Sayısı: ${participants.length}
-Kalem Sayısı: ${items.length}
-Toplam İşlem: ${donations.length}
-Onaylı İşlem: ${approvedDonations.length}
-
-KALEM BAZINDA ÖZET:
-${items.map(item => `- ${item.name}: ${getItemTotal(item.id)}/${item.initial_target}`).join('\n')}
-
-Rapor Tarihi: ${new Date().toLocaleString('tr-TR')}
-`;
-        downloadFile(summary, 'ozet-rapor.txt', 'text/plain;charset=utf-8');
+        
+        // Build top donors list
+        const donorTotals = new Map<string, number>();
+        approvedDonations.forEach((d) => {
+          const current = donorTotals.get(d.participant_id) || 0;
+          donorTotals.set(d.participant_id, current + d.quantity);
+        });
+        const topDonors = Array.from(donorTotals.entries())
+          .map(([id, total]) => ({ name: getParticipantName(id), totalDonations: total }))
+          .sort((a, b) => b.totalDonations - a.totalDonations)
+          .slice(0, 10);
+        
+        const reportData = {
+          event: {
+            name: 'Bağış Etkinliği',
+            date: new Date().toLocaleDateString('tr-TR'),
+            venue: '-',
+            status: 'active',
+            totalApproved: grandTotal,
+            totalTarget: grandTarget,
+            participantCount: participants.length,
+            itemCount: items.length
+          },
+          items: items.map(item => ({
+            name: item.name,
+            current: getItemTotal(item.id),
+            initial_target: item.initial_target,
+            percentage: item.initial_target > 0 ? (getItemTotal(item.id) / item.initial_target) * 100 : 0
+          })),
+          topDonors,
+          donations: donations.slice(0, 50).map(d => ({
+            participant: getParticipantName(d.participant_id),
+            item: getItemName(d.item_id),
+            quantity: d.quantity,
+            status: d.status === 'approved' ? 'Onaylı' : d.status === 'pending' ? 'Bekleyen' : 'Reddedilen',
+            timestamp: new Date(d.timestamp).toLocaleString('tr-TR')
+          }))
+        };
+        
+        const doc = generateEventReportPDF(reportData);
+        doc.save('ozet-rapor.pdf');
+        appendAuditLog({ eventId: eventIdForLog, action: AuditActions.REPORT_GENERATED, details: `Rapor tipi: Özet Rapor PDF` });
         break;
       }
       case 'top-donors': {
@@ -2744,49 +2751,46 @@ Rapor Tarihi: ${new Date().toLocaleString('tr-TR')}
           .map(([id, total]) => ({ name: getParticipantName(id), total }))
           .sort((a, b) => b.total - a.total);
         
-        const headers = ['Sıra', 'Katılımcı', 'Toplam Bağış'];
-        const rows = sortedDonors.map((d, i) => [(i + 1).toString(), d.name, d.total.toString()]);
-        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
-        downloadFile(csv, 'top-bagiscilar.csv', 'text/csv;charset=utf-8');
+        const data = sortedDonors.map((d, i) => ({
+          'Sıra': i + 1,
+          'Katılımcı': d.name,
+          'Toplam Bağış': d.total
+        }));
+        downloadCSV(data, 'top-bagiscilar', ['Sıra', 'Katılımcı', 'Toplam Bağış']);
+        appendAuditLog({ eventId: eventIdForLog, action: AuditActions.REPORT_GENERATED, details: `Rapor tipi: Top Bağışçılar (${data.length} kayıt)` });
         break;
       }
       case 'items-summary': {
-        const headers = ['Kalem', 'Hedef', 'Mevcut', 'Kalan', 'İlerleme %'];
-        const rows = items.map((item) => {
+        const data = items.map((item) => {
           const total = getItemTotal(item.id);
           const remaining = Math.max(0, item.initial_target - total);
           const progress = item.initial_target > 0 ? ((total / item.initial_target) * 100).toFixed(1) : '0';
-          return [item.name, item.initial_target.toString(), total.toString(), remaining.toString(), progress];
+          return {
+            'Kalem': item.name,
+            'Hedef': item.initial_target,
+            'Mevcut': total,
+            'Kalan': remaining,
+            'İlerleme %': progress
+          };
         });
-        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
-        downloadFile(csv, 'kalem-bazinda-ozet.csv', 'text/csv;charset=utf-8');
+        downloadCSV(data, 'kalem-bazinda-ozet', ['Kalem', 'Hedef', 'Mevcut', 'Kalan', 'İlerleme %']);
+        appendAuditLog({ eventId: eventIdForLog, action: AuditActions.REPORT_GENERATED, details: `Rapor tipi: Kalem Bazında Özet (${data.length} kalem)` });
         break;
       }
       case 'participants-list': {
-        const headers = ['Katılımcı', 'Tip', 'Masa', 'Koltuk', 'Toplam Bağış', 'Durum'];
-        const rows = participants.map((p) => [
-          p.display_name,
-          p.type === 'ORG' ? 'Kurum' : 'Kişi',
-          p.table_no || '-',
-          p.seat_label || '-',
-          getParticipantTotal(p.id).toString(),
-          p.status === 'active' ? 'Aktif' : 'Pasif'
-        ]);
-        const csv = BOM + [headers, ...rows].map(row => row.join(';')).join('\n');
-        downloadFile(csv, 'katilimci-listesi.csv', 'text/csv;charset=utf-8');
+        const data = participants.map((p) => ({
+          'Katılımcı': p.display_name,
+          'Tip': p.type === 'ORG' ? 'Kurum' : 'Kişi',
+          'Masa': p.table_no || '-',
+          'Koltuk': p.seat_label || '-',
+          'Toplam Bağış': getParticipantTotal(p.id),
+          'Durum': p.status === 'active' ? 'Aktif' : 'Pasif'
+        }));
+        downloadCSV(data, 'katilimci-listesi', ['Katılımcı', 'Tip', 'Masa', 'Koltuk', 'Toplam Bağış', 'Durum']);
+        appendAuditLog({ eventId: eventIdForLog, action: AuditActions.REPORT_GENERATED, details: `Rapor tipi: Katılımcı Listesi (${data.length} kişi)` });
         break;
       }
     }
-  };
-
-  const downloadFile = (content: string, filename: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   return (
@@ -2857,31 +2861,219 @@ Rapor Tarihi: ${new Date().toLocaleString('tr-TR')}
 
 }
 function AuditTab({ auditLog }: {auditLog: AuditLogEntry[];}) {
+  const toast = useToast();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [actionFilter, setActionFilter] = useState('all');
+  const [userFilter, setUserFilter] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  
+  // Get unique actions and users for filters
+  const uniqueActions = useMemo(() => {
+    const actions = new Set(auditLog.map(log => log.action));
+    return Array.from(actions).sort();
+  }, [auditLog]);
+  
+  const uniqueUsers = useMemo(() => {
+    const users = new Set(auditLog.map(log => log.user));
+    return Array.from(users).sort();
+  }, [auditLog]);
+  
+  // Filter logs
+  const filteredLogs = useMemo(() => {
+    return auditLog.filter(log => {
+      // Search filter
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesAction = log.action.toLowerCase().includes(query);
+        const matchesDetails = log.details.toLowerCase().includes(query);
+        const matchesUser = log.user.toLowerCase().includes(query);
+        if (!matchesAction && !matchesDetails && !matchesUser) {
+          return false;
+        }
+      }
+      
+      // Action filter
+      if (actionFilter !== 'all' && log.action !== actionFilter) {
+        return false;
+      }
+      
+      // User filter
+      if (userFilter !== 'all' && log.user !== userFilter) {
+        return false;
+      }
+      
+      // Date range
+      if (startDate) {
+        const start = new Date(startDate).getTime();
+        if (log.timestamp < start) return false;
+      }
+      if (endDate) {
+        const end = new Date(endDate).getTime() + 86400000; // Include end day
+        if (log.timestamp > end) return false;
+      }
+      
+      return true;
+    });
+  }, [auditLog, searchQuery, actionFilter, userFilter, startDate, endDate]);
+  
+  const handleExportCSV = () => {
+    exportAuditLogCSV(filteredLogs, `denetim-kayitlari-${Date.now()}`);
+    toast.success('Denetim kayıtları CSV olarak indirildi');
+    setShowExportMenu(false);
+  };
+  
+  const handleExportExcel = () => {
+    exportAuditLogExcel(filteredLogs, `denetim-kayitlari-${Date.now()}`);
+    toast.success('Denetim kayıtları Excel olarak indirildi');
+    setShowExportMenu(false);
+  };
+  
+  const clearFilters = () => {
+    setSearchQuery('');
+    setActionFilter('all');
+    setUserFilter('all');
+    setStartDate('');
+    setEndDate('');
+  };
+  
+  const hasActiveFilters = searchQuery || actionFilter !== 'all' || userFilter !== 'all' || startDate || endDate;
+  
   return (
     <div className="space-y-4">
+      {/* Toolbar */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          {/* Search */}
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative flex-1 max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Kayıtlarda ara..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 pr-4 py-2 border rounded-lg text-sm w-full focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20"
+              />
+            </div>
+            
+            {/* Action Filter */}
+            <select
+              value={actionFilter}
+              onChange={(e) => setActionFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20"
+            >
+              <option value="all">Tüm İşlemler</option>
+              {uniqueActions.map(action => (
+                <option key={action} value={action}>{action}</option>
+              ))}
+            </select>
+            
+            {/* User Filter */}
+            <select
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20"
+            >
+              <option value="all">Tüm Kullanıcılar</option>
+              {uniqueUsers.map(user => (
+                <option key={user} value={user}>{user}</option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Date Range & Actions */}
+          <div className="flex items-center gap-3">
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20"
+            />
+            <span className="text-gray-400">-</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/20"
+            />
+            
+            {hasActiveFilters && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X className="w-4 h-4 mr-1" /> Temizle
+              </Button>
+            )}
+            
+            {/* Export Menu */}
+            <div className="relative">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+              >
+                <Download className="w-4 h-4 mr-2" /> Dışa Aktar
+              </Button>
+              
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-10">
+                  <button
+                    onClick={handleExportCSV}
+                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <FileText className="w-4 h-4" /> CSV olarak indir
+                  </button>
+                  <button
+                    onClick={handleExportExcel}
+                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" /> Excel olarak indir
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* Results count */}
+        <div className="mt-3 text-sm text-gray-500">
+          {filteredLogs.length} / {auditLog.length} kayıt gösteriliyor
+        </div>
+      </Card>
+      
+      {/* Log entries */}
       <Card>
         <div className="divide-y">
-          {auditLog.map((entry) =>
-          <div key={entry.id} className="p-4 flex items-start gap-4">
-              <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center shrink-0">
-                <History className="w-5 h-5 text-gray-500" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-900">
-                    {entry.action}
-                  </span>
-                  <span className="text-xs text-gray-400">•</span>
-                  <span className="text-xs text-gray-500">{entry.user}</span>
-                </div>
-                {entry.details &&
-              <p className="text-sm text-gray-600 mt-1">{entry.details}</p>
-              }
-                <p className="text-xs text-gray-400 mt-2">
-                  {new Date(entry.timestamp).toLocaleString('tr-TR')}
-                </p>
-              </div>
+          {filteredLogs.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              <History className="w-12 h-12 mx-auto mb-4 opacity-20" />
+              <p>Kayıt bulunamadı</p>
             </div>
+          ) : (
+            filteredLogs.map((entry) => (
+              <div key={entry.id} className="p-4 flex items-start gap-4 hover:bg-gray-50">
+                <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center shrink-0">
+                  <History className="w-5 h-5 text-gray-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-900">
+                      {entry.action}
+                    </span>
+                    <span className="text-xs text-gray-400">•</span>
+                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                      {entry.user}
+                    </span>
+                  </div>
+                  {entry.details && (
+                    <p className="text-sm text-gray-600 mt-1">{entry.details}</p>
+                  )}
+                  <p className="text-xs text-gray-400 mt-2">
+                    {new Date(entry.timestamp).toLocaleString('tr-TR')}
+                  </p>
+                </div>
+              </div>
+            ))
           )}
         </div>
       </Card>
@@ -3767,18 +3959,36 @@ function BulkQRModal({
   eventId?: string;
   onUpdateParticipants?: (participants: any[]) => void;
 }) {
-  const [format, setFormat] = useState('pdf');
+  const toast = useToast();
+  const [format, setFormat] = useState<'pdf' | 'zip'>('pdf');
   const [size, setSize] = useState('60x40');
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState<ExportProgress | null>(null);
+  const [localParticipants, setLocalParticipants] = useState<any[]>([]);
+  const qrRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  
+  // Initialize local participants with tokens
+  useEffect(() => {
+    if (participants && eventId) {
+      const withTokens = participants.map(p => {
+        if (!p.token) {
+          const token = `${eventId.slice(0,4)}-${p.id.slice(-4)}-${Math.random().toString(36).slice(2,6)}`.toUpperCase();
+          return { ...p, token, qr_generated: true };
+        }
+        return { ...p, qr_generated: true };
+      });
+      setLocalParticipants(withTokens);
+    }
+  }, [participants, eventId]);
   
   const handleGenerate = async () => {
-    if (!participants || participants.length === 0 || !eventId) return;
+    if (localParticipants.length === 0 || !eventId) return;
     setGenerating(true);
+    setProgress({ current: 0, total: localParticipants.length, message: 'Token\'lar kontrol ediliyor...' });
     
     try {
-      // Generate tokens for participants who don't have one
-      const baseUrl = window.location.origin + window.location.pathname;
-      const updatedParticipants = participants.map(p => {
+      // Ensure all have tokens
+      const updatedParticipants = localParticipants.map(p => {
         if (!p.token) {
           const token = `${eventId.slice(0,4)}-${p.id.slice(-4)}-${Math.random().toString(36).slice(2,6)}`.toUpperCase();
           return { ...p, token, qr_generated: true };
@@ -3786,41 +3996,85 @@ function BulkQRModal({
         return { ...p, qr_generated: true };
       });
       
-      // Update participants with tokens
+      // Update local state first
+      setLocalParticipants(updatedParticipants);
+      
+      // Update parent state
       if (onUpdateParticipants) {
         onUpdateParticipants(updatedParticipants);
       }
       
-      // Generate QR codes as data URLs using canvas
-      const qrDataList: { name: string; token: string; qrDataUrl: string }[] = [];
+      setProgress({ current: 0, total: updatedParticipants.length, message: 'QR kodları render ediliyor...' });
       
-      for (const p of updatedParticipants) {
-        const qrUrl = `${baseUrl}#/p/${p.token}`;
-        // Create simple QR-like placeholder (real implementation would use qrcode library)
-        const canvas = document.createElement('canvas');
-        const qrSize = size === '60x40' ? 150 : 200;
-        canvas.width = qrSize;
-        canvas.height = qrSize;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, qrSize, qrSize);
-          ctx.fillStyle = '#000000';
-          ctx.font = '10px monospace';
-          ctx.textAlign = 'center';
-          // Simple text representation
-          ctx.fillText(p.token || 'QR', qrSize/2, qrSize/2);
-          ctx.fillText(p.display_name.slice(0,15), qrSize/2, qrSize/2 + 15);
+      // Wait for QR codes to re-render with updated tokens
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      // Collect QR codes from hidden canvas elements
+      const qrCodes: { name: string; dataUrl: string }[] = [];
+      
+      for (let i = 0; i < updatedParticipants.length; i++) {
+        const p = updatedParticipants[i];
+        const canvas = qrRefs.current.get(p.id);
+        
+        if (canvas) {
+          // Create a new canvas with name label
+          const labelCanvas = document.createElement('canvas');
+          const qrSize = size === '60x40' ? 150 : 200;
+          labelCanvas.width = qrSize;
+          labelCanvas.height = qrSize + 40;
+          const ctx = labelCanvas.getContext('2d');
+          
+          if (ctx) {
+            // White background
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
+            
+            // Draw QR code
+            ctx.drawImage(canvas, 0, 0, qrSize, qrSize);
+            
+            // Draw name
+            ctx.fillStyle = '#1e3a5f';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            const displayName = p.display_name.length > 20 
+              ? p.display_name.slice(0, 20) + '...' 
+              : p.display_name;
+            ctx.fillText(displayName, qrSize / 2, qrSize + 15);
+            
+            // Draw token
+            ctx.font = '10px Arial';
+            ctx.fillStyle = '#666666';
+            ctx.fillText(p.token, qrSize / 2, qrSize + 30);
+            
+            qrCodes.push({
+              name: p.display_name.replace(/[^a-zA-Z0-9\u00C0-\u017F]/g, '_'),
+              dataUrl: labelCanvas.toDataURL('image/png')
+            });
+          }
         }
-        qrDataList.push({
-          name: p.display_name,
-          token: p.token,
-          qrDataUrl: canvas.toDataURL('image/png')
+        
+        setProgress({ 
+          current: i + 1, 
+          total: updatedParticipants.length, 
+          message: `QR oluşturuluyor: ${p.display_name}` 
         });
       }
       
-      if (format === 'pdf') {
-        // Generate simple HTML page with QR codes for printing
+      if (format === 'zip') {
+        setProgress({ current: 0, total: 100, message: 'ZIP dosyası oluşturuluyor...' });
+        await downloadQRZip(qrCodes, `qr-kodlari-${eventId}`, setProgress);
+        toast.success(`${qrCodes.length} QR kodu ZIP olarak indirildi`);
+        
+        // Audit log for QR generation
+        appendAuditLog({
+          eventId: eventId,
+          action: AuditActions.QR_CODES_GENERATED,
+          details: `${qrCodes.length} katılımcı için QR kodları ZIP olarak üretildi`
+        });
+      } else {
+        // Generate PDF for printing
+        setProgress({ current: 50, total: 100, message: 'PDF oluşturuluyor...' });
+        
         const printContent = `
 <!DOCTYPE html>
 <html>
@@ -3829,20 +4083,21 @@ function BulkQRModal({
   <style>
     body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
     .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-    .card { border: 1px solid #ccc; padding: 15px; text-align: center; page-break-inside: avoid; }
-    .card img { width: ${size === '60x40' ? '100' : '120'}px; height: ${size === '60x40' ? '100' : '120'}px; }
-    .name { font-weight: bold; margin-top: 10px; font-size: 12px; }
-    .token { font-size: 10px; color: #666; margin-top: 5px; }
-    @media print { .grid { grid-template-columns: repeat(3, 1fr); } }
+    .card { border: 1px solid #ccc; padding: 15px; text-align: center; page-break-inside: avoid; border-radius: 8px; }
+    .card img { width: ${size === '60x40' ? '100' : '120'}px; height: auto; }
+    .name { font-weight: bold; margin-top: 10px; font-size: 12px; color: #1e3a5f; }
+    .token { font-size: 10px; color: #666; margin-top: 5px; font-family: monospace; }
+    @media print { 
+      .grid { grid-template-columns: repeat(3, 1fr); } 
+      .card { border: 1px solid #ccc; }
+    }
   </style>
 </head>
 <body>
   <div class="grid">
-    ${qrDataList.map(q => `
+    ${qrCodes.map((q, i) => `
       <div class="card">
-        <img src="${q.qrDataUrl}" alt="QR" />
-        <div class="name">${q.name}</div>
-        <div class="token">${q.token}</div>
+        <img src="${q.dataUrl}" alt="QR" />
       </div>
     `).join('')}
   </div>
@@ -3857,32 +4112,42 @@ function BulkQRModal({
             URL.revokeObjectURL(url);
           };
         }
-      } else {
-        // Download as text file with QR URLs (simplified - real implementation would create ZIP)
-        const content = qrDataList.map(q => `${q.name}\t${q.token}\t${baseUrl}#/p/${q.token}`).join('\n');
-        const blob = new Blob(['\uFEFF' + 'İsim\tToken\tURL\n' + content], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `qr-kodlari-${eventId}.txt`;
-        a.click();
-        URL.revokeObjectURL(url);
+        toast.success(`${qrCodes.length} QR kodu PDF olarak hazırlandı`);
+        
+        // Audit log for QR generation
+        appendAuditLog({
+          eventId: eventId,
+          action: AuditActions.QR_CODES_GENERATED,
+          details: `${qrCodes.length} katılımcı için QR kodları PDF olarak üretildi`
+        });
       }
       
       onClose();
     } catch (err) {
       console.error('QR generation error:', err);
+      toast.error('QR kodları oluşturulurken hata oluştu');
     } finally {
       setGenerating(false);
+      setProgress(null);
     }
   };
+  
+  // Generate QR URLs from localParticipants for proper token sync
+  const qrUrls = useMemo(() => {
+    if (localParticipants.length === 0 || !eventId) return [];
+    return localParticipants.map(p => ({
+      id: p.id,
+      token: p.token,
+      url: `${window.location.origin}#/p/${p.token}`
+    }));
+  }, [localParticipants, eventId]);
   
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
           <h3 className="font-bold text-lg">Toplu QR Üret</h3>
-          <button onClick={onClose} className="text-white/70 hover:text-white">
+          <button onClick={onClose} className="text-white/70 hover:text-white" disabled={generating}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -3900,6 +4165,22 @@ function BulkQRModal({
             </p>
           </div>
 
+          {/* Progress Bar */}
+          {progress && (
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>{progress.message}</span>
+                <span>{progress.current}/{progress.total}</span>
+              </div>
+              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -3908,6 +4189,7 @@ function BulkQRModal({
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setSize('60x40')}
+                  disabled={generating}
                   className={cn(
                     'p-3 border rounded-lg text-sm text-center transition-colors',
                     size === '60x40' ?
@@ -3969,9 +4251,31 @@ function BulkQRModal({
           <Button variant="outline" onClick={onClose}>
             İptal
           </Button>
-          <Button variant="primary" onClick={handleGenerate} disabled={generating || !participants?.length}>
-            <Printer className="w-4 h-4 mr-2" /> {generating ? 'Üretiliyor...' : 'Üret ve İndir'}
-          </Button>
+          <LoadingButton 
+            variant="primary" 
+            onClick={handleGenerate} 
+            disabled={!participants?.length}
+            loading={generating}
+            loadingText="Üretiliyor..."
+          >
+            <Printer className="w-4 h-4 mr-2" /> Üret ve İndir
+          </LoadingButton>
+        </div>
+        
+        {/* Hidden QR Canvases for generation */}
+        <div className="hidden">
+          {qrUrls.map(qr => (
+            <QRCodeCanvas
+              key={qr.id}
+              value={`${window.location.origin}#/p/${qr.token}`}
+              size={size === '60x40' ? 150 : 200}
+              level="M"
+              includeMargin={true}
+              ref={(el: HTMLCanvasElement | null) => {
+                if (el) qrRefs.current.set(qr.id, el);
+              }}
+            />
+          ))}
         </div>
       </div>
     </div>);
@@ -4305,82 +4609,179 @@ function ExportModal({
   events?: EventRecord[];
   selectedEventIds?: string[];
 }) {
-  const [format, setFormat] = useState<'csv' | 'json'>('csv');
+  const toast = useToast();
+  const [format, setFormat] = useState<'csv' | 'excel' | 'json'>('csv');
   const [scope, setScope] = useState<'all' | 'selected'>('all');
+  const [exporting, setExporting] = useState(false);
+  const [progress, setProgress] = useState<ExportProgress | null>(null);
+  
   const hasSelection = selectedEventIds.length > 0;
   const targetEvents =
     scope === 'selected' && hasSelection
       ? events.filter((event) => selectedEventIds.includes(event.id))
       : events;
-  const handleDownload = () => {
+      
+  const handleDownload = async () => {
     if (targetEvents.length === 0) return;
-    if (format === 'csv') {
-      const csv = buildEventsCsv(targetEvents);
-      downloadTextFile('events.csv', csv, 'text/csv;charset=utf-8');
-      onClose();
-      return;
-    }
-    const eventData = targetEvents.map((event) => {
-      try {
-        const items = JSON.parse(
-          localStorage.getItem(`polvak_event_${event.id}_items`) || '[]'
-        );
-        const participants = JSON.parse(
-          localStorage.getItem(`polvak_event_${event.id}_participants`) || '[]'
-        );
-        const donations = JSON.parse(
-          localStorage.getItem(`polvak_event_${event.id}_donations`) || '[]'
-        );
-        return {
-          eventId: event.id,
-          items,
-          participants,
-          donations
-        } as EventData;
-      } catch {
-        return {
-          eventId: event.id,
-          items: [],
-          participants: [],
-          donations: []
-        } as EventData;
+    setExporting(true);
+    
+    try {
+      if (format === 'csv') {
+        setProgress({ current: 50, total: 100, message: 'CSV oluşturuluyor...' });
+        const csv = buildEventsCsv(targetEvents);
+        downloadTextFile('events.csv', csv, 'text/csv;charset=utf-8');
+        toast.success('CSV dosyası indirildi');
+        
+        // Audit log
+        appendAuditLog({
+          eventId: 'system',
+          action: AuditActions.DATA_EXPORTED,
+          details: `${targetEvents.length} etkinlik CSV olarak dışa aktarıldı (${scope})`
+        });
+      } else if (format === 'excel') {
+        setProgress({ current: 30, total: 100, message: 'Excel dosyası hazırlanıyor...' });
+        
+        // Prepare data for Excel
+        const eventData = targetEvents.map(e => ({
+          'ID': e.id,
+          'Ad': e.name,
+          'Tarih': e.date,
+          'Başlangıç': e.startTime,
+          'Bitiş': e.endTime,
+          'Mekan': e.venue,
+          'Durum': e.status,
+          'Katılımcı': e.participantCount,
+          'Kalem': e.itemCount,
+          'Hedef': e.totalTarget,
+          'Onaylanan': e.totalApproved,
+          'Bekleyen': e.totalPending,
+          'Reddedilen': e.totalRejected
+        }));
+        
+        setProgress({ current: 70, total: 100, message: 'Dosya yazılıyor...' });
+        downloadExcel([{ name: 'Etkinlikler', data: eventData }], 'etkinlikler');
+        toast.success('Excel dosyası indirildi');
+        
+        // Audit log
+        appendAuditLog({
+          eventId: 'system',
+          action: AuditActions.DATA_EXPORTED,
+          details: `${targetEvents.length} etkinlik Excel olarak dışa aktarıldı (${scope})`
+        });
+      } else {
+        setProgress({ current: 20, total: 100, message: 'Veriler toplanıyor...' });
+        
+        const eventDataList = targetEvents.map((event, index) => {
+          setProgress({ 
+            current: 20 + Math.round((index / targetEvents.length) * 60), 
+            total: 100, 
+            message: `${event.name} işleniyor...` 
+          });
+          
+          try {
+            const items = JSON.parse(
+              localStorage.getItem(`polvak_event_${event.id}_items`) || '[]'
+            );
+            const participants = JSON.parse(
+              localStorage.getItem(`polvak_event_${event.id}_participants`) || '[]'
+            );
+            const donations = JSON.parse(
+              localStorage.getItem(`polvak_event_${event.id}_donations`) || '[]'
+            );
+            return {
+              eventId: event.id,
+              items,
+              participants,
+              donations
+            } as EventData;
+          } catch {
+            return {
+              eventId: event.id,
+              items: [],
+              participants: [],
+              donations: []
+            } as EventData;
+          }
+        });
+        
+        setProgress({ current: 90, total: 100, message: 'JSON dosyası oluşturuluyor...' });
+        const payload = JSON.stringify({
+          events: targetEvents,
+          eventData: eventDataList
+        }, null, 2);
+        downloadTextFile('events-backup.json', payload, 'application/json');
+        toast.success('JSON yedek dosyası indirildi');
+        
+        // Audit log
+        appendAuditLog({
+          eventId: 'system',
+          action: AuditActions.DATA_EXPORTED,
+          details: `${targetEvents.length} etkinlik JSON olarak yedeklendi (${scope})`
+        });
       }
-    });
-    const payload = JSON.stringify({
-      events: targetEvents,
-      eventData
-    }, null, 2);
-    downloadTextFile('events-backup.json', payload, 'application/json');
-    onClose();
+      
+      setProgress({ current: 100, total: 100, message: 'Tamamlandı!' });
+      await new Promise(r => setTimeout(r, 500));
+      onClose();
+    } catch (err) {
+      console.error('Export error:', err);
+      toast.error('Dışa aktarma sırasında hata oluştu');
+    } finally {
+      setExporting(false);
+      setProgress(null);
+    }
   };
+  
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         <div className="bg-[#1e3a5f] text-white px-6 py-4 flex items-center justify-between">
           <h3 className="font-bold text-lg">Dışa Aktar</h3>
-          <button onClick={onClose} className="text-white/70 hover:text-white">
+          <button onClick={onClose} className="text-white/70 hover:text-white" disabled={exporting}>
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-6 space-y-4">
+          {/* Progress Bar */}
+          {progress && (
+            <div className="space-y-2 mb-4">
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>{progress.message}</span>
+                <span>{progress.current}%</span>
+              </div>
+              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${progress.current}%` }}
+                />
+              </div>
+            </div>
+          )}
+          
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Format
             </label>
             <div className="grid grid-cols-3 gap-3">
-              {['csv', 'json'].map((f) =>
+              {[
+                { value: 'csv', label: 'CSV' },
+                { value: 'excel', label: 'Excel' },
+                { value: 'json', label: 'JSON' }
+              ].map((f) =>
               <button
-                key={f}
-                onClick={() => setFormat(f as 'csv' | 'json')}
+                key={f.value}
+                onClick={() => setFormat(f.value as 'csv' | 'excel' | 'json')}
+                disabled={exporting}
                 className={cn(
                   'p-3 border rounded-lg text-sm text-center uppercase transition-colors',
-                  format === f ?
+                  format === f.value ?
                   'border-[#1e3a5f] bg-blue-50 text-[#1e3a5f] font-medium' :
-                  'hover:bg-gray-50'
+                  'hover:bg-gray-50',
+                  exporting && 'opacity-50 cursor-not-allowed'
                 )}>
 
-                  {f}
+                  {f.label}
                 </button>
               )}
             </div>
@@ -4391,40 +4792,50 @@ function ExportModal({
               Veri Kapsamı
             </label>
             <div className="space-y-2">
-              <label className="flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+              <label className={cn(
+                "flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-gray-50",
+                exporting && "opacity-50 cursor-not-allowed"
+              )}>
                 <input
                   type="radio"
                   name="scope"
                   checked={scope === 'all'}
                   onChange={() => setScope('all')}
+                  disabled={exporting}
                   className="text-[#1e3a5f]" />
 
-                <span>Tüm Veriler</span>
+                <span>Tüm Veriler ({events.length} etkinlik)</span>
               </label>
-              <label className="flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+              <label className={cn(
+                "flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-gray-50",
+                exporting && "opacity-50 cursor-not-allowed"
+              )}>
                 <input
                   type="radio"
                   name="scope"
                   checked={scope === 'selected'}
                   onChange={() => setScope('selected')}
+                  disabled={exporting || !hasSelection}
                   className="text-[#1e3a5f]" />
 
-                <span>Sadece Seçili Satırlar</span>
+                <span>Sadece Seçili Satırlar ({selectedEventIds.length} etkinlik)</span>
               </label>
             </div>
           </div>
         </div>
 
         <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={exporting}>
             İptal
           </Button>
-          <Button
+          <LoadingButton
             variant="primary"
             onClick={handleDownload}
+            loading={exporting}
+            loadingText="İndiriliyor..."
             disabled={targetEvents.length === 0 || (scope === 'selected' && !hasSelection)}>
             <Download className="w-4 h-4 mr-2" /> İndir
-          </Button>
+          </LoadingButton>
         </div>
       </div>
     </div>);

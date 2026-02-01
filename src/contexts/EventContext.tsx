@@ -8,6 +8,7 @@ import React, {
   ReactNode
 } from 'react';
 import { Donation, DonationItem, EventContextType, EventData, Participant } from '../types';
+import { appendAuditLog, AuditActions } from '../lib/auditLog';
 
 const buildEventStorageKey = (eventId: string, suffix: string) =>
   `polvak_event_${eventId}_${suffix}`;
@@ -99,6 +100,7 @@ const readStorageValue = (key: string) => {
 };
 
 interface ExtendedEventContextType extends EventContextType {
+  activeEventId: string | null;
   isTransitioning: boolean;
   setIsTransitioning: (value: boolean) => void;
   transitionCountdown: number;
@@ -399,6 +401,7 @@ export function EventProvider({
   };
 
   const approveDonation = (donationId: string) => {
+    const donation = donations.find(d => d.id === donationId);
     setDonations((prev) =>
       prev.map((d) =>
         d.id === donationId
@@ -409,9 +412,19 @@ export function EventProvider({
           : d
       )
     );
+    if (donation && activeEventId) {
+      const participant = participants.find(p => p.id === donation.participant_id);
+      const item = items.find(i => i.id === donation.item_id);
+      appendAuditLog({
+        eventId: activeEventId,
+        action: AuditActions.DONATION_APPROVED,
+        details: `${participant?.display_name || 'Bilinmeyen'} - ${item?.name || 'Bilinmeyen'} x${donation.quantity}`
+      });
+    }
   };
 
   const rejectDonation = (donationId: string) => {
+    const donation = donations.find(d => d.id === donationId);
     setDonations((prev) =>
       prev.map((d) =>
         d.id === donationId
@@ -422,6 +435,15 @@ export function EventProvider({
           : d
       )
     );
+    if (donation && activeEventId) {
+      const participant = participants.find(p => p.id === donation.participant_id);
+      const item = items.find(i => i.id === donation.item_id);
+      appendAuditLog({
+        eventId: activeEventId,
+        action: AuditActions.DONATION_REJECTED,
+        details: `${participant?.display_name || 'Bilinmeyen'} - ${item?.name || 'Bilinmeyen'} x${donation.quantity}`
+      });
+    }
   };
 
   const undoLastApproval = () => {
@@ -429,9 +451,20 @@ export function EventProvider({
       .filter((d) => d.status === 'approved')
       .sort((a, b) => b.timestamp - a.timestamp);
     if (sortedApproved.length > 0) {
-      const lastId = sortedApproved[0].id;
+      const lastDonation = sortedApproved[0];
+      const lastId = lastDonation.id;
       // Bağışı tamamen sil (pending yerine rejected veya silme)
       setDonations((prev) => prev.filter((d) => d.id !== lastId));
+      
+      if (activeEventId) {
+        const participant = participants.find(p => p.id === lastDonation.participant_id);
+        const item = items.find(i => i.id === lastDonation.item_id);
+        appendAuditLog({
+          eventId: activeEventId,
+          action: AuditActions.DONATION_UNDONE,
+          details: `${participant?.display_name || 'Bilinmeyen'} - ${item?.name || 'Bilinmeyen'} x${lastDonation.quantity}`
+        });
+      }
     }
   };
 
@@ -473,6 +506,14 @@ export function EventProvider({
       eventId: item.eventId || activeEventId || item.eventId
     };
     setItems((prev) => [...prev, newItem]);
+    
+    if (activeEventId) {
+      appendAuditLog({
+        eventId: activeEventId,
+        action: AuditActions.ITEM_ADDED,
+        details: newItem.name
+      });
+    }
   };
 
   const updateItem = (id: string, data: Partial<DonationItem>) => {
@@ -489,6 +530,7 @@ export function EventProvider({
   };
 
   const deleteItem = (id: string) => {
+    const item = items.find(i => i.id === id);
     setItems((prev) => {
       const remaining = prev.filter((item) => item.id !== id);
       if (activeItemId === id) {
@@ -496,6 +538,14 @@ export function EventProvider({
       }
       return remaining;
     });
+    
+    if (activeEventId && item) {
+      appendAuditLog({
+        eventId: activeEventId,
+        action: AuditActions.ITEM_DELETED,
+        details: item.name
+      });
+    }
   };
 
   const reorderItems = (itemId: string, direction: 'up' | 'down') => {
@@ -529,6 +579,14 @@ export function EventProvider({
       eventId: participant.eventId || activeEventId || participant.eventId
     };
     setParticipants((prev) => [...prev, newParticipant]);
+    
+    if (activeEventId) {
+      appendAuditLog({
+        eventId: activeEventId,
+        action: AuditActions.PARTICIPANT_ADDED,
+        details: newParticipant.display_name
+      });
+    }
   };
 
   const updateParticipant = (id: string, data: Partial<Participant>) => {
@@ -547,7 +605,16 @@ export function EventProvider({
   };
 
   const deleteParticipant = (id: string) => {
+    const participant = participants.find(p => p.id === id);
     setParticipants((prev) => prev.filter((p) => p.id !== id));
+    
+    if (activeEventId && participant) {
+      appendAuditLog({
+        eventId: activeEventId,
+        action: AuditActions.PARTICIPANT_DELETED,
+        details: participant.display_name
+      });
+    }
   };
 
   const getDonationsByItem = (itemId: string) => {
@@ -585,6 +652,7 @@ export function EventProvider({
   return (
     <EventContext.Provider
       value={{
+        activeEventId,
         items,
         participants,
         donations,
